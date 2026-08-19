@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+
+exec strace -ff -s 128 -o /run/reolink-ftps/vsftpd.strace \
+    /usr/sbin/vsftpd.real "$@"

@@ -4,6 +4,14 @@ set -Eeuo pipefail
 image="${1:-reolink-ftps:test}"
 test_dir="$(mktemp -d)"
 container="reolink-ftps-test-$$"
+security_args=()
+
+case "${FTPS_TEST_SECURITY_MODE:-default}" in
+    default) ;;
+    apparmor-unconfined) security_args+=(--security-opt apparmor=unconfined) ;;
+    seccomp-unconfined) security_args+=(--security-opt seccomp=unconfined) ;;
+    *) echo "Unsupported FTPS_TEST_SECURITY_MODE" >&2; exit 2 ;;
+esac
 
 cleanup() {
     docker rm -f "${container}" >/dev/null 2>&1 || true
@@ -18,6 +26,7 @@ mkdir -p "${test_dir}/media/ReolinkSSD" "${test_dir}/data" "${test_dir}/ssl" "${
 cp tests/fixtures/options.json "${test_dir}/data/options.json"
 
 docker run -d --name "${container}" \
+    "${security_args[@]}" \
     -p 2121:21 \
     -p 30000-30019:30000-30019 \
     -v "${test_dir}/media:/media" \

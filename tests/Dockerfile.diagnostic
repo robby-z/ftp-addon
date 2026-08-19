@@ -1,0 +1,10 @@
+ARG SOURCE_IMAGE=reolink-ftps:test
+FROM ${SOURCE_IMAGE}
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends strace \
+    && rm -rf /var/lib/apt/lists/* \
+    && mv /usr/sbin/vsftpd /usr/sbin/vsftpd.real
+
+COPY tests/trace-vsftpd /usr/sbin/vsftpd
+RUN chmod 0755 /usr/sbin/vsftpd

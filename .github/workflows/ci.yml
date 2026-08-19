@@ -30,10 +30,11 @@ jobs:
         run: >-
           shellcheck reolink_ftps/rootfs/etc/services.d/reolink-ftps/run
           reolink_ftps/rootfs/etc/services.d/reolink-ftps/finish
-          tests/run_integration.sh tests/missing_anchor.sh tests/low_space.sh
+          tests/run_integration.sh tests/run_diagnostic.sh tests/trace-vsftpd
+          tests/missing_anchor.sh tests/low_space.sh
       - name: Python compile and unit/security tests
         run: |
-          python -m py_compile reolink_ftps/rootfs/usr/local/bin/reolink-ftps tests/test_runtime.py tests/integration_ftps.py
+          python -m py_compile reolink_ftps/rootfs/usr/local/bin/reolink-ftps tests/test_runtime.py tests/integration_ftps.py tests/diagnostic_login.py
           python -m unittest discover -s tests -p 'test_*.py' -v
       - name: Home Assistant App metadata lint
         uses: frenck/action-addon-linter@v2.21.0
@@ -52,6 +53,24 @@ jobs:
       - name: Build amd64 image
         run: docker build --platform linux/amd64 --tag reolink-ftps:test reolink_ftps
       - name: Explicit FTPS, passive, isolation, read-only, and restart tests
+        run: tests/run_integration.sh reolink-ftps:test
+      - name: Capture vsftpd syscall diagnostics after live-test failure
+        if: failure()
+        continue-on-error: true
+        run: |
+          docker build --file tests/Dockerfile.diagnostic --tag reolink-ftps:diagnostic .
+          tests/run_diagnostic.sh reolink-ftps:diagnostic
+      - name: Compare Docker AppArmor after live-test failure
+        if: failure()
+        continue-on-error: true
+        env:
+          FTPS_TEST_SECURITY_MODE: apparmor-unconfined
+        run: tests/run_integration.sh reolink-ftps:test
+      - name: Compare Docker seccomp after live-test failure
+        if: failure()
+        continue-on-error: true
+        env:
+          FTPS_TEST_SECURITY_MODE: seccomp-unconfined
         run: tests/run_integration.sh reolink-ftps:test
       - name: Missing-anchor startup rejection
         run: tests/missing_anchor.sh reolink-ftps:test
