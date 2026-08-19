@@ -95,6 +95,8 @@ Do **not** use **Move data disk** for this design: that moves Home Assistant's g
 
 The App maps only `/media` and `/share` read/write, `/ssl` read-only, and its automatic persistent `/data`. It has no device access, host filesystem, Docker socket, Supervisor API role, `full_access`, host networking, or privileged mode. Protection Mode stays enabled.
 
+vsftpd's own legacy seccomp sandbox is disabled because the Alpine build's fixed syscall filter terminates login children on some current amd64 container kernels. The container runtime's seccomp policy remains active, as do the AppArmor profile, per-user chroot, dropped login shells, mapped-storage boundaries, and Home Assistant Protection Mode.
+
 ## TLS
 
 Leave both certificate fields blank to generate an RSA-3072, SHA-256 self-signed certificate under persistent `/data/tls`. It is reused on every restart. Cameras may need to accept or tolerate a self-signed server certificate.

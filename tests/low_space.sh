@@ -7,6 +7,9 @@ container="reolink-ftps-low-space-$$"
 
 cleanup() {
     docker rm -f "${container}" >/dev/null 2>&1 || true
+    docker run --rm --entrypoint /bin/chown \
+        -v "${test_dir}:/cleanup" "${image}" \
+        -R "$(id -u):$(id -g)" /cleanup >/dev/null 2>&1 || true
     rm -rf "${test_dir}"
 }
 trap cleanup EXIT

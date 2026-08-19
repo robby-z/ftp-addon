@@ -101,6 +101,8 @@ There is currently no secure native Home Assistant selector for an arbitrary sub
 
 At low free space the App stops vsftpd entirely and resumes after recovery. This briefly blocks reads too, but reliably stops writes to existing nested camera directories. It never auto-deletes unless `retention_days` is positive.
 
+The Alpine vsftpd package's internal legacy seccomp filter is disabled because it kills login children on some current amd64 container kernels. Docker/container seccomp, AppArmor, chroot isolation, and Home Assistant Protection Mode remain active.
+
 ## Reolink setup
 
 - **Server:** Home Assistant LAN IP or DNS hostname—do not include `ftp://`, `ftps://`, a port, or a directory
