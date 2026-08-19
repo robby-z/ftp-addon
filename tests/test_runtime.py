@@ -179,6 +179,7 @@ class RuntimeTests(unittest.TestCase):
         text = path.read_text()
         self.assertIn("force_local_logins_ssl=YES", text)
         self.assertIn("seccomp_sandbox=NO", text)
+        self.assertIn("secure_chroot_dir=/run/vsftpd/empty", text)
         self.assertIn("pasv_min_port=30000", text)
         self.assertIn("pasv_max_port=30019", text)
         self.assertIn("pasv_address=127.0.0.1", text)

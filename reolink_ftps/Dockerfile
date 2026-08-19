@@ -1,14 +1,16 @@
-ARG BUILD_FROM=ghcr.io/home-assistant/base:3.24
+ARG BUILD_FROM=ghcr.io/home-assistant/base-debian:trixie
 FROM ${BUILD_FROM}
 
 ARG BUILD_ARCH
 ARG BUILD_VERSION=1.0.0
 
-RUN apk add --no-cache \
-        openssl~3.5 \
-        python3~3.14 \
-        shadow~4.18 \
-        vsftpd~3.0
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        openssl \
+        passwd \
+        python3 \
+        vsftpd \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY rootfs /
 
