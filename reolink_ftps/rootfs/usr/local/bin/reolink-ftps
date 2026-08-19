@@ -1,0 +1,564 @@
+#!/usr/bin/python3
+"""Validate options, provision isolated users, and supervise vsftpd safely."""
+
+from __future__ import annotations
+
+import argparse
+import ipaddress
+import json
+import logging
+import os
+import re
+import shutil
+import signal
+import socket
+import ssl
+import stat
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
+from typing import Any
+
+VERSION = "1.0.0"
+RESERVED_USERS = {"root", "anonymous", "ftp", "nobody", "daemon", "bin", "sync"}
+USERNAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$")
+PATH_SEGMENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+MARKER_RE = re.compile(r"^\.[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+HOSTNAME_RE = re.compile(
+    r"^(?=.{1,253}\.?$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)*"
+    r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.?$"
+)
+LOG = logging.getLogger("reolink-ftps")
+
+
+class ConfigError(RuntimeError):
+    """A safe, user-actionable configuration failure."""
+
+
+@dataclass(frozen=True)
+class User:
+    username: str
+    password: str
+    directory: str
+    read_only: bool
+
+
+@dataclass(frozen=True)
+class RuntimeConfig:
+    raw: dict[str, Any]
+    base: Path
+    anchor: Path
+    recording_root: Path
+    users: tuple[User, ...]
+    cert: Path
+    key: Path
+    cert_source: str
+
+
+def atomic_write(path: Path, content: str, mode: int = 0o600) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        os.fchmod(fd, mode)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def validated_relative(value: Any, label: str, *, minimum_parts: int = 1) -> PurePosixPath:
+    if not isinstance(value, str) or not value or "\x00" in value or "\\" in value:
+        raise ConfigError(f"{label} must be a non-empty relative POSIX path")
+    raw_parts = value.split("/")
+    if any(part in {"", ".", ".."} for part in raw_parts):
+        raise ConfigError(f"{label} contains an unsafe path component")
+    candidate = PurePosixPath(value)
+    if candidate.is_absolute() or value.startswith("/"):
+        raise ConfigError(f"{label} must not be an absolute path")
+    if len(candidate.parts) < minimum_parts:
+        raise ConfigError(f"{label} must contain at least {minimum_parts} path components")
+    for part in candidate.parts:
+        if part in {"", ".", ".."} or not PATH_SEGMENT_RE.fullmatch(part):
+            raise ConfigError(f"{label} contains an unsafe path component: {part!r}")
+    return candidate
+
+
+def path_beneath(path: Path, parent: Path, label: str) -> None:
+    try:
+        path.relative_to(parent)
+    except ValueError as err:
+        raise ConfigError(f"{label} resolves outside {parent}") from err
+
+
+def ensure_directory_chain(root: Path, relative: PurePosixPath, mode: int = 0o2770) -> Path:
+    current = root
+    for part in relative.parts:
+        current = current / part
+        if current.exists() or current.is_symlink():
+            info = current.lstat()
+            if stat.S_ISLNK(info.st_mode):
+                raise ConfigError(f"Refusing symbolic link in storage path: {current}")
+            if not stat.S_ISDIR(info.st_mode):
+                raise ConfigError(f"Storage path component is not a directory: {current}")
+        else:
+            current.mkdir(mode=mode)
+    resolved = current.resolve(strict=True)
+    path_beneath(resolved, root.resolve(strict=True), "Storage directory")
+    return resolved
+
+
+def write_test(directory: Path) -> None:
+    test_path: str | None = None
+    try:
+        fd, test_path = tempfile.mkstemp(prefix=".reolink-ftps-write-test-", dir=directory)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(b"storage-health-check\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.unlink(test_path)
+    except OSError as err:
+        if test_path:
+            try:
+                os.unlink(test_path)
+            except OSError:
+                pass
+        raise ConfigError(f"Configured storage is not writable: {directory}: {err}") from err
+
+
+def validate_users(raw_users: Any) -> tuple[User, ...]:
+    if not isinstance(raw_users, list) or not raw_users:
+        raise ConfigError("At least one FTP user with a non-empty password is required")
+    result: list[User] = []
+    names: set[str] = set()
+    for index, item in enumerate(raw_users):
+        if not isinstance(item, dict):
+            raise ConfigError(f"users[{index}] must be an object")
+        username = item.get("username")
+        password = item.get("password")
+        if not isinstance(username, str) or not USERNAME_RE.fullmatch(username):
+            raise ConfigError(f"users[{index}].username contains unsafe characters")
+        if username.lower() in RESERVED_USERS:
+            raise ConfigError(f"Reserved FTP username is not allowed: {username}")
+        if username in names:
+            raise ConfigError(f"Duplicate FTP username: {username}")
+        if not isinstance(password, str) or not password:
+            raise ConfigError(f"Password for {username} must not be empty")
+        if "\x00" in password or "\n" in password or "\r" in password:
+            raise ConfigError(f"Password for {username} contains unsupported control characters")
+        directory = str(validated_relative(item.get("directory"), f"Directory for {username}"))
+        if not isinstance(item.get("read_only"), bool):
+            raise ConfigError(f"read_only for {username} must be true or false")
+        names.add(username)
+        result.append(User(username, password, directory, item["read_only"]))
+    return tuple(result)
+
+
+def validate_pasv_address(value: Any) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ConfigError(
+            "pasv_address is required; set it to the Home Assistant LAN IP or hostname "
+            "so cameras are never given the private container address"
+        )
+    value = value.strip()
+    try:
+        ipaddress.IPv4Address(value)
+        return value
+    except ipaddress.AddressValueError:
+        if not HOSTNAME_RE.fullmatch(value):
+            raise ConfigError("pasv_address must be an IPv4 address or valid DNS hostname")
+        try:
+            socket.getaddrinfo(value, None, socket.AF_INET, socket.SOCK_STREAM)
+        except socket.gaierror as err:
+            raise ConfigError(f"pasv_address hostname cannot be resolved: {value}") from err
+        return value
+
+
+def validate_tls(raw: Any, data_dir: Path, ssl_dir: Path) -> tuple[Path, Path, str]:
+    if not isinstance(raw, dict):
+        raise ConfigError("tls must be an object")
+    require_tls = raw.get("require_tls")
+    allow_plain = raw.get("allow_plain_ftp")
+    if not isinstance(require_tls, bool) or not isinstance(allow_plain, bool):
+        raise ConfigError("TLS flags must be true or false")
+    if require_tls and allow_plain:
+        raise ConfigError("tls.require_tls and tls.allow_plain_ftp cannot both be enabled")
+    if not require_tls and not allow_plain:
+        raise ConfigError("Plain FTP must be explicitly enabled when TLS is not required")
+    certificate = raw.get("certificate", "")
+    private_key = raw.get("private_key", "")
+    if bool(certificate) != bool(private_key):
+        raise ConfigError("Both tls.certificate and tls.private_key must be configured together")
+    if certificate:
+        cert_rel = validated_relative(certificate, "TLS certificate")
+        key_rel = validated_relative(private_key, "TLS private key")
+        try:
+            ssl_root = ssl_dir.resolve(strict=True)
+            cert = (ssl_dir / Path(*cert_rel.parts)).resolve(strict=True)
+            key = (ssl_dir / Path(*key_rel.parts)).resolve(strict=True)
+        except OSError as err:
+            raise ConfigError("Configured TLS certificate or private key does not exist") from err
+        path_beneath(cert, ssl_root, "TLS certificate")
+        path_beneath(key, ssl_root, "TLS private key")
+        source = "Home Assistant /ssl certificate"
+    else:
+        tls_dir = data_dir / "tls"
+        if tls_dir.is_symlink():
+            raise ConfigError("Persistent TLS directory must not be a symbolic link")
+        tls_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        path_beneath(tls_dir.resolve(strict=True), data_dir.resolve(strict=True), "Persistent TLS directory")
+        cert, key = tls_dir / "selfsigned.crt", tls_dir / "selfsigned.key"
+        if not cert.exists() and not key.exists():
+            LOG.info("Generating persistent self-signed TLS certificate")
+            subprocess.run(
+                [
+                    "openssl", "req", "-x509", "-newkey", "rsa:3072", "-sha256",
+                    "-days", "3650", "-nodes", "-subj", "/CN=Reolink FTPS Server",
+                    "-keyout", str(key), "-out", str(cert),
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            key.chmod(0o600)
+            cert.chmod(0o644)
+        elif not cert.exists() or not key.exists():
+            raise ConfigError("Persistent self-signed certificate pair is incomplete; restore or remove both files")
+        source = "persistent self-signed certificate"
+    validate_certificate_pair(cert, key)
+    return cert, key, source
+
+
+def validate_certificate_pair(cert: Path, key: Path) -> None:
+    try:
+        ssl.PEM_cert_to_DER_cert(cert.read_text(encoding="ascii"))
+        cert_pub = subprocess.run(
+            ["openssl", "x509", "-in", str(cert), "-pubkey", "-noout"],
+            check=True, capture_output=True, text=True,
+        ).stdout
+        key_pub = subprocess.run(
+            ["openssl", "pkey", "-in", str(key), "-pubout"],
+            check=True, capture_output=True, text=True,
+        ).stdout
+    except (OSError, UnicodeError, ValueError, subprocess.CalledProcessError) as err:
+        raise ConfigError("TLS certificate or private key is invalid") from err
+    if cert_pub != key_pub:
+        raise ConfigError("TLS certificate and private key do not match")
+
+
+def prepare_runtime(
+    raw: dict[str, Any], *, data_dir: Path, ssl_dir: Path,
+    mapped_roots: dict[str, Path] | None = None,
+) -> RuntimeConfig:
+    storage = raw.get("storage")
+    if not isinstance(storage, dict):
+        raise ConfigError("storage must be an object")
+    root_name = storage.get("root")
+    if root_name not in {"media", "share"}:
+        raise ConfigError("storage.root must be media or share")
+    base = (mapped_roots or {"media": Path("/media"), "share": Path("/share")})[root_name]
+    if not base.is_dir():
+        raise ConfigError(f"Mapped storage root is unavailable: {base}")
+    relative = validated_relative(storage.get("directory"), "storage.directory", minimum_parts=2)
+    base_real = base.resolve(strict=True)
+    anchor = base / relative.parts[0]
+    if not anchor.exists() or anchor.is_symlink() or not anchor.is_dir():
+        raise ConfigError(
+            f"Configured recording storage {anchor} is unavailable. Refusing to start to prevent "
+            "recordings from being written to the Home Assistant system disk."
+        )
+    anchor_real = anchor.resolve(strict=True)
+    path_beneath(anchor_real, base_real, "Storage anchor")
+    write_test(anchor_real)
+    marker = storage.get("marker_file", ".reolink-storage")
+    if not isinstance(marker, str) or not MARKER_RE.fullmatch(marker):
+        raise ConfigError("storage.marker_file must be a safe hidden filename")
+    marker_path = anchor_real / marker
+    if storage.get("initialize_marker_file"):
+        if marker_path.is_symlink():
+            raise ConfigError(f"Marker file must not be a symbolic link: {marker_path}")
+        marker_path.touch(mode=0o600, exist_ok=True)
+        LOG.info("Storage marker initialized at %s", marker_path)
+    if storage.get("require_marker_file") and (not marker_path.is_file() or marker_path.is_symlink()):
+        raise ConfigError(f"Required storage marker is missing: {marker_path}")
+    recording_relative = PurePosixPath(*relative.parts[1:])
+    recording_root = ensure_directory_chain(anchor_real, recording_relative)
+    write_test(recording_root)
+    users = validate_users(raw.get("users"))
+    for user in users:
+        ensure_directory_chain(recording_root, PurePosixPath(user.directory))
+    cert, key, source = validate_tls(raw.get("tls"), data_dir, ssl_dir)
+    validate_pasv_address(raw.get("pasv_address"))
+    validate_scalar_ranges(raw)
+    return RuntimeConfig(raw, base_real, anchor_real, recording_root, users, cert, key, source)
+
+
+def validate_scalar_ranges(raw: dict[str, Any]) -> None:
+    ranges = {
+        "max_clients": (1, 200), "max_per_ip": (1, 50),
+        "idle_session_timeout": (60, 86400), "data_connection_timeout": (30, 3600),
+        "delay_failed_login": (0, 30), "retention_days": (0, 3650),
+    }
+    for key, (minimum, maximum) in ranges.items():
+        value = raw.get(key)
+        if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+            raise ConfigError(f"{key} must be between {minimum} and {maximum}")
+    storage = raw["storage"]
+    for key in ("stop_uploads_below_free_space", "require_marker_file", "initialize_marker_file"):
+        if not isinstance(storage.get(key), bool):
+            raise ConfigError(f"storage.{key} must be true or false")
+    minimum_free = storage.get("minimum_free_space_gb")
+    if isinstance(minimum_free, bool) or not isinstance(minimum_free, int) or not 1 <= minimum_free <= 10000:
+        raise ConfigError("storage.minimum_free_space_gb must be between 1 and 10000")
+
+
+def allocate_uids(users: tuple[User, ...], data_dir: Path) -> dict[str, int]:
+    path = data_dir / "user_uids.json"
+    try:
+        stored = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    except (OSError, json.JSONDecodeError) as err:
+        raise ConfigError(f"Cannot read persistent user UID map: {err}") from err
+    valid = {k: v for k, v in stored.items() if isinstance(k, str) and isinstance(v, int) and 21000 <= v <= 60000}
+    used = set(valid.values())
+    next_uid = 21000
+    for user in users:
+        if user.username not in valid:
+            while next_uid in used:
+                next_uid += 1
+            if next_uid > 60000:
+                raise ConfigError("No container UID is available for another FTP user")
+            valid[user.username] = next_uid
+            used.add(next_uid)
+    atomic_write(path, json.dumps(valid, sort_keys=True, indent=2) + "\n")
+    return {user.username: valid[user.username] for user in users}
+
+
+def run_quiet(command: list[str], *, input_text: str | None = None) -> None:
+    try:
+        subprocess.run(command, input=input_text, text=True, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    except subprocess.CalledProcessError as err:
+        raise ConfigError(f"Container account provisioning failed while running {command[0]}") from err
+
+
+def provision_users(config: RuntimeConfig, data_dir: Path) -> None:
+    try:
+        subprocess.run(["getent", "group", "reolinkftp"], check=True, stdout=subprocess.DEVNULL)
+    except subprocess.CalledProcessError:
+        run_quiet(["groupadd", "-g", "20000", "reolinkftp"])
+    uids = allocate_uids(config.users, data_dir)
+    shells = Path("/etc/shells")
+    if shells.exists() and "/sbin/nologin" not in shells.read_text(encoding="utf-8").splitlines():
+        with shells.open("a", encoding="utf-8") as handle:
+            handle.write("/sbin/nologin\n")
+    for user in config.users:
+        home = ensure_directory_chain(config.recording_root, PurePosixPath(user.directory))
+        try:
+            subprocess.run(["id", user.username], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except subprocess.CalledProcessError:
+            run_quiet([
+                "useradd", "--uid", str(uids[user.username]), "--gid", "reolinkftp", "--no-create-home",
+                "--home-dir", str(home), "--shell", "/sbin/nologin", user.username,
+            ])
+        run_quiet(["usermod", "--home", str(home), user.username])
+        run_quiet(["chpasswd"], input_text=f"{user.username}:{user.password}\n")
+        os.chown(home, 0, 20000)
+        os.chmod(home, 0o2770)
+
+
+def build_vsftpd_config(
+    config: RuntimeConfig, runtime_dir: Path, user_config_dir: Path = Path("/etc/vsftpd/users"),
+) -> Path:
+    raw, tls = config.raw, config.raw["tls"]
+    pasv = validate_pasv_address(raw["pasv_address"])
+    is_hostname = not _is_ipv4(pasv)
+    lines = [
+        "listen=YES", "listen_ipv6=NO", "anonymous_enable=NO", "local_enable=YES",
+        "write_enable=YES", "local_umask=0007", "file_open_mode=0660", "dirmessage_enable=NO", "use_localtime=YES",
+        "connect_from_port_20=NO", "chroot_local_user=YES", "allow_writeable_chroot=YES",
+        "hide_ids=YES", "ls_recurse_enable=NO", "seccomp_sandbox=YES", "pam_service_name=vsftpd",
+        f"user_config_dir={user_config_dir}", "ssl_enable=YES", "allow_anon_ssl=NO",
+        f"force_local_logins_ssl={'YES' if tls['require_tls'] else 'NO'}",
+        f"force_local_data_ssl={'YES' if tls['require_tls'] else 'NO'}",
+        "ssl_sslv2=NO", "ssl_sslv3=NO", "ssl_tlsv1=YES", "require_ssl_reuse=NO",
+        "ssl_ciphers=HIGH:!aNULL:!MD5:!3DES:!CAMELLIA", f"rsa_cert_file={config.cert}",
+        f"rsa_private_key_file={config.key}", "pasv_enable=YES", "pasv_min_port=30000",
+        "pasv_max_port=30019", f"pasv_address={pasv}",
+        f"pasv_addr_resolve={'YES' if is_hostname else 'NO'}", f"max_clients={raw['max_clients']}",
+        f"max_per_ip={raw['max_per_ip']}", f"idle_session_timeout={raw['idle_session_timeout']}",
+        f"data_connection_timeout={raw['data_connection_timeout']}",
+        f"delay_failed_login={raw['delay_failed_login']}", "background=NO", "log_ftp_protocol=NO",
+        "xferlog_enable=NO", "dual_log_enable=NO", "syslog_enable=NO",
+    ]
+    config_path = runtime_dir / "vsftpd.conf"
+    atomic_write(config_path, "\n".join(lines) + "\n")
+    user_dir = user_config_dir
+    user_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    for old in user_dir.iterdir():
+        if old.is_file() and old.name not in {u.username for u in config.users}:
+            old.unlink()
+    for user in config.users:
+        local_root = ensure_directory_chain(config.recording_root, PurePosixPath(user.directory))
+        per_user = [f"local_root={local_root}", f"write_enable={'NO' if user.read_only else 'YES'}"]
+        atomic_write(user_dir / user.username, "\n".join(per_user) + "\n")
+    return config_path
+
+
+def _is_ipv4(value: str) -> bool:
+    try:
+        ipaddress.IPv4Address(value)
+        return True
+    except ipaddress.AddressValueError:
+        return False
+
+
+def free_bytes(path: Path) -> int:
+    return shutil.disk_usage(path).free
+
+
+def remove_expired_files(root: Path, days: int) -> tuple[int, int]:
+    if days <= 0:
+        return 0, 0
+    root_real = root.resolve(strict=True)
+    cutoff = time.time() - days * 86400
+    removed = reclaimed = 0
+    for current, dirs, files in os.walk(root_real, topdown=True, followlinks=False):
+        current_path = Path(current)
+        dirs[:] = [name for name in dirs if not (current_path / name).is_symlink()]
+        path_beneath(current_path.resolve(strict=True), root_real, "Retention path")
+        for name in files:
+            path = current_path / name
+            try:
+                info = path.lstat()
+                if stat.S_ISREG(info.st_mode) and info.st_mtime < cutoff:
+                    path.unlink()
+                    removed += 1
+                    reclaimed += info.st_size
+            except FileNotFoundError:
+                continue
+    return removed, reclaimed
+
+
+class Supervisor:
+    def __init__(self, config: RuntimeConfig, config_path: Path):
+        self.config = config
+        self.config_path = config_path
+        self.stop = threading.Event()
+        self.child: subprocess.Popen[str] | None = None
+
+    def terminate(self, *_args: object) -> None:
+        self.stop.set()
+        if self.child and self.child.poll() is None:
+            self.child.terminate()
+
+    def run(self) -> int:
+        storage = self.config.raw["storage"]
+        threshold = storage["minimum_free_space_gb"] * 1024**3
+        blocked = False
+        last_retention = 0.0
+        while not self.stop.is_set():
+            available = free_bytes(self.config.recording_root)
+            should_block = storage["stop_uploads_below_free_space"] and available < threshold
+            if should_block:
+                if not blocked:
+                    LOG.error(
+                        "FREE SPACE SAFETY STOP: %.2f GiB is below the configured %d GiB; FTP service stopped",
+                        available / 1024**3, storage["minimum_free_space_gb"],
+                    )
+                    blocked = True
+                if self.child and self.child.poll() is None:
+                    self.child.terminate()
+                    try:
+                        self.child.wait(timeout=15)
+                    except subprocess.TimeoutExpired:
+                        self.child.kill()
+                self.stop.wait(30)
+                continue
+            if blocked:
+                LOG.warning("Free space recovered to %.2f GiB; restarting FTP service", available / 1024**3)
+                blocked = False
+            if not self.child or self.child.poll() is not None:
+                if self.child and self.child.returncode not in (None, 0, -signal.SIGTERM):
+                    LOG.error("vsftpd exited unexpectedly with code %s", self.child.returncode)
+                    return self.child.returncode or 1
+                self.child = subprocess.Popen(["/usr/sbin/vsftpd", str(self.config_path)], text=True)
+            now = time.time()
+            retention = self.config.raw["retention_days"]
+            if retention and now - last_retention >= 3600:
+                count, size = remove_expired_files(self.config.recording_root, retention)
+                if count:
+                    LOG.info("Retention removed %d files and reclaimed %.2f MiB", count, size / 1024**2)
+                last_retention = now
+            self.stop.wait(30)
+        if self.child and self.child.poll() is None:
+            self.child.terminate()
+            try:
+                self.child.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                self.child.kill()
+        return 0
+
+
+def load_options(path: Path) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as err:
+        raise ConfigError(f"Cannot read Home Assistant options: {err}") from err
+    if not isinstance(value, dict):
+        raise ConfigError("Home Assistant options must be a JSON object")
+    return value
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("command", choices=("run", "validate"), nargs="?", default="run")
+    parser.add_argument("--options", type=Path, default=Path(os.environ.get("OPTIONS_PATH", "/data/options.json")))
+    args = parser.parse_args()
+    try:
+        raw = load_options(args.options)
+        level_name = str(raw.get("log_level", "info")).upper()
+        logging.basicConfig(level=getattr(logging, level_name, logging.INFO), format="%(asctime)s %(levelname)s: %(message)s")
+        data_dir = Path(os.environ.get("DATA_DIR", "/data"))
+        ssl_dir = Path(os.environ.get("SSL_DIR", "/ssl"))
+        config = prepare_runtime(raw, data_dir=data_dir, ssl_dir=ssl_dir)
+        available = free_bytes(config.recording_root)
+        LOG.info("Reolink FTPS Server %s", VERSION)
+        LOG.info("Recording root: %s", config.recording_root)
+        LOG.info("Storage anchor: %s (device %s, %.2f GiB available)", config.anchor, config.recording_root.stat().st_dev, available / 1024**3)
+        LOG.info("FTPS required: %s; plain FTP allowed: %s", raw["tls"]["require_tls"], raw["tls"]["allow_plain_ftp"])
+        if raw["tls"]["allow_plain_ftp"]:
+            LOG.warning("PLAIN FTP IS ENABLED: credentials and recordings can cross the network unencrypted")
+        LOG.info("TLS source: %s", config.cert_source)
+        LOG.info("Control port 21; passive ports 30000-30019; PASV address %s", raw["pasv_address"])
+        LOG.info("Configured FTP users: %d; retention: %s", len(config.users), f"{raw['retention_days']} days" if raw["retention_days"] else "disabled")
+        if args.command == "validate":
+            return 0
+        provision_users(config, data_dir)
+        runtime_dir = Path("/run/reolink-ftps")
+        runtime_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        vsftpd_config = build_vsftpd_config(config, runtime_dir)
+        supervisor = Supervisor(config, vsftpd_config)
+        signal.signal(signal.SIGTERM, supervisor.terminate)
+        signal.signal(signal.SIGINT, supervisor.terminate)
+        return supervisor.run()
+    except ConfigError as err:
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
+        LOG.error("Configuration refused: %s", err)
+        return 1
+    except subprocess.CalledProcessError as err:
+        LOG.error("Required command failed: %s", err.cmd[0] if isinstance(err.cmd, list) else err.cmd)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

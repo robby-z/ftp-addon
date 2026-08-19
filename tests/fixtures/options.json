@@ -1,0 +1,25 @@
+{
+  "storage": {
+    "root": "media",
+    "directory": "ReolinkSSD/reolink",
+    "minimum_free_space_gb": 1,
+    "stop_uploads_below_free_space": true,
+    "require_marker_file": false,
+    "initialize_marker_file": false,
+    "marker_file": ".reolink-storage"
+  },
+  "users": [
+    {"username": "camera_front", "password": "front-secret", "directory": "front", "read_only": false},
+    {"username": "camera_garden", "password": "garden-secret", "directory": "garden", "read_only": false},
+    {"username": "viewer", "password": "viewer-secret", "directory": "front", "read_only": true}
+  ],
+  "tls": {"require_tls": true, "allow_plain_ftp": false, "certificate": "", "private_key": ""},
+  "pasv_address": "127.0.0.1",
+  "max_clients": 20,
+  "max_per_ip": 5,
+  "idle_session_timeout": 600,
+  "data_connection_timeout": 300,
+  "delay_failed_login": 2,
+  "retention_days": 0,
+  "log_level": "debug"
+}

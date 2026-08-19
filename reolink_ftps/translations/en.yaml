@@ -1,0 +1,100 @@
+configuration:
+  storage:
+    name: Recording storage
+    description: Select a mapped root and a relative directory below a pre-existing storage anchor.
+    fields:
+      root:
+        name: Storage root
+        description: Home Assistant mapped storage root. Only Media and Share are permitted.
+      directory:
+        name: Relative recording directory
+        description: At least two components, for example ReolinkSSD/reolink. The first component is the required anchor.
+      minimum_free_space_gb:
+        name: Minimum free space (GiB)
+        description: Safety threshold measured on the filesystem containing the recording directory.
+      stop_uploads_below_free_space:
+        name: Stop service below threshold
+        description: Stop FTP/FTPS completely when available space falls below the threshold.
+      require_marker_file:
+        name: Require storage marker
+        description: Refuse startup unless the configured marker exists in the storage anchor.
+      initialize_marker_file:
+        name: Initialize storage marker
+        description: Create the marker in an existing, validated anchor. Disable this after the first successful start.
+      marker_file:
+        name: Marker filename
+        description: Hidden filename expected directly inside the storage anchor.
+  users:
+    name: FTP users
+    description: Configure at least one camera-specific or read-only account.
+    fields:
+      username:
+        name: Username
+      password:
+        name: Password
+        description: Stored by Home Assistant and never written to logs.
+      directory:
+        name: User directory
+        description: Relative path below the recording root; this becomes the user's chroot.
+      read_only:
+        name: Read only
+        description: Permit listing and download but deny every write operation.
+  tls:
+    name: TLS security
+    description: Explicit FTPS uses AUTH TLS on the normal control port.
+    fields:
+      require_tls:
+        name: Require TLS
+        description: Require encrypted authentication and data for every connection.
+      allow_plain_ftp:
+        name: Allow plain FTP
+        description: Unsafe compatibility option for old cameras on an isolated trusted LAN.
+      certificate:
+        name: Certificate in /ssl
+        description: Relative filename, or blank to use a persistent self-signed certificate.
+      private_key:
+        name: Private key in /ssl
+        description: Relative filename matching the configured certificate.
+  pasv_address:
+    name: Passive-mode address
+    description: Home Assistant LAN IPv4 address or resolvable hostname advertised to cameras. Required before startup.
+  max_clients:
+    name: Maximum clients
+  max_per_ip:
+    name: Maximum clients per IP
+  idle_session_timeout:
+    name: Idle session timeout
+    description: Seconds before an idle control session closes.
+  data_connection_timeout:
+    name: Data connection timeout
+    description: Seconds before an idle data connection closes.
+  delay_failed_login:
+    name: Failed-login delay
+    description: Delay in seconds after a failed login.
+  retention_days:
+    name: Retention period
+    description: Delete regular recording files older than this many days. Zero disables retention.
+  log_level:
+    name: Log level
+network:
+  21/tcp: Explicit FTP/FTPS control port
+  30000/tcp: Passive data port 30000 (keep the external port unchanged)
+  30001/tcp: Passive data port 30001 (keep the external port unchanged)
+  30002/tcp: Passive data port 30002 (keep the external port unchanged)
+  30003/tcp: Passive data port 30003 (keep the external port unchanged)
+  30004/tcp: Passive data port 30004 (keep the external port unchanged)
+  30005/tcp: Passive data port 30005 (keep the external port unchanged)
+  30006/tcp: Passive data port 30006 (keep the external port unchanged)
+  30007/tcp: Passive data port 30007 (keep the external port unchanged)
+  30008/tcp: Passive data port 30008 (keep the external port unchanged)
+  30009/tcp: Passive data port 30009 (keep the external port unchanged)
+  30010/tcp: Passive data port 30010 (keep the external port unchanged)
+  30011/tcp: Passive data port 30011 (keep the external port unchanged)
+  30012/tcp: Passive data port 30012 (keep the external port unchanged)
+  30013/tcp: Passive data port 30013 (keep the external port unchanged)
+  30014/tcp: Passive data port 30014 (keep the external port unchanged)
+  30015/tcp: Passive data port 30015 (keep the external port unchanged)
+  30016/tcp: Passive data port 30016 (keep the external port unchanged)
+  30017/tcp: Passive data port 30017 (keep the external port unchanged)
+  30018/tcp: Passive data port 30018 (keep the external port unchanged)
+  30019/tcp: Passive data port 30019 (keep the external port unchanged)

@@ -1,0 +1,91 @@
+name: Reolink FTPS Server
+version: "1.0.0"
+slug: reolink_ftps
+description: Secure explicit FTPS server for Reolink cameras, powered by vsftpd.
+url: https://github.com/robby-z/ftp-addon/tree/main/reolink_ftps
+startup: services
+init: false
+arch:
+  - amd64
+  - aarch64
+image: ghcr.io/robby-z/reolink-ftps
+backup: cold
+map:
+  - type: media
+    read_only: false
+  - type: share
+    read_only: false
+  - type: ssl
+    read_only: true
+ports:
+  21/tcp: 21
+  30000/tcp: 30000
+  30001/tcp: 30001
+  30002/tcp: 30002
+  30003/tcp: 30003
+  30004/tcp: 30004
+  30005/tcp: 30005
+  30006/tcp: 30006
+  30007/tcp: 30007
+  30008/tcp: 30008
+  30009/tcp: 30009
+  30010/tcp: 30010
+  30011/tcp: 30011
+  30012/tcp: 30012
+  30013/tcp: 30013
+  30014/tcp: 30014
+  30015/tcp: 30015
+  30016/tcp: 30016
+  30017/tcp: 30017
+  30018/tcp: 30018
+  30019/tcp: 30019
+options:
+  storage:
+    root: media
+    directory: ReolinkSSD/reolink
+    minimum_free_space_gb: 20
+    stop_uploads_below_free_space: true
+    require_marker_file: false
+    initialize_marker_file: false
+    marker_file: .reolink-storage
+  users: []
+  tls:
+    require_tls: true
+    allow_plain_ftp: false
+    certificate: ""
+    private_key: ""
+  pasv_address: ""
+  max_clients: 20
+  max_per_ip: 5
+  idle_session_timeout: 600
+  data_connection_timeout: 300
+  delay_failed_login: 2
+  retention_days: 0
+  log_level: info
+schema:
+  storage:
+    root: list(media|share)
+    directory: str(3,240)
+    minimum_free_space_gb: int(1,10000)
+    stop_uploads_below_free_space: bool
+    require_marker_file: bool
+    initialize_marker_file: bool
+    marker_file: match(^\.[A-Za-z0-9][A-Za-z0-9._-]{0,63}$)
+  users:
+    - username: match(^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$)
+      password: password
+      directory: str(1,240)
+      read_only: bool
+  tls:
+    require_tls: bool
+    allow_plain_ftp: bool
+    certificate: str
+    private_key: str
+  pasv_address: str
+  max_clients: int(1,200)
+  max_per_ip: int(1,50)
+  idle_session_timeout: int(60,86400)
+  data_connection_timeout: int(30,3600)
+  delay_failed_login: int(0,30)
+  retention_days: int(0,3650)
+  log_level: list(error|warning|info|debug)

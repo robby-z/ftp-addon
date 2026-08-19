@@ -1,0 +1,100 @@
+configuration:
+  storage:
+    name: Aufnahmespeicher
+    description: Wählt einen eingebundenen Stamm und ein relatives Verzeichnis unter einem vorhandenen Speicheranker.
+    fields:
+      root:
+        name: Speicherstamm
+        description: Eingebundener Home-Assistant-Speicher. Nur Medien und Freigabe sind zulässig.
+      directory:
+        name: Relatives Aufnahmeverzeichnis
+        description: Mindestens zwei Bestandteile, z. B. ReolinkSSD/reolink. Der erste ist der erforderliche Anker.
+      minimum_free_space_gb:
+        name: Mindestfreier Speicher (GiB)
+        description: Sicherheitsgrenze auf dem Dateisystem des Aufnahmeverzeichnisses.
+      stop_uploads_below_free_space:
+        name: Dienst unter Grenze stoppen
+        description: Stoppt FTP/FTPS vollständig, wenn der freie Speicher die Grenze unterschreitet.
+      require_marker_file:
+        name: Speichermarkierung verlangen
+        description: Startet nur, wenn die Markierungsdatei im Speicheranker vorhanden ist.
+      initialize_marker_file:
+        name: Speichermarkierung anlegen
+        description: Legt die Markierung im vorhandenen, geprüften Anker an. Danach wieder deaktivieren.
+      marker_file:
+        name: Name der Markierungsdatei
+        description: Versteckte Datei direkt im Speicheranker.
+  users:
+    name: FTP-Benutzer
+    description: Mindestens ein eigenes Kamera- oder Nur-Lese-Konto konfigurieren.
+    fields:
+      username:
+        name: Benutzername
+      password:
+        name: Passwort
+        description: Wird von Home Assistant gespeichert und niemals protokolliert.
+      directory:
+        name: Benutzerverzeichnis
+        description: Relativer Pfad unter dem Aufnahmeverzeichnis und Stamm des Benutzer-Chroots.
+      read_only:
+        name: Schreibgeschützt
+        description: Erlaubt Auflisten und Herunterladen, verweigert aber alle Schreibvorgänge.
+  tls:
+    name: TLS-Sicherheit
+    description: Explizites FTPS verwendet AUTH TLS auf dem normalen Steuerport.
+    fields:
+      require_tls:
+        name: TLS erzwingen
+        description: Verschlüsselte Anmeldung und Datenübertragung für jede Verbindung erzwingen.
+      allow_plain_ftp:
+        name: Unverschlüsseltes FTP erlauben
+        description: Unsichere Kompatibilitätsoption für alte Kameras in einem isolierten vertrauenswürdigen LAN.
+      certificate:
+        name: Zertifikat in /ssl
+        description: Relativer Dateiname; leer verwendet ein dauerhaftes selbstsigniertes Zertifikat.
+      private_key:
+        name: Privater Schlüssel in /ssl
+        description: Relativer Dateiname des zum Zertifikat passenden Schlüssels.
+  pasv_address:
+    name: Passivmodus-Adresse
+    description: Für Kameras erreichbare LAN-IPv4-Adresse oder auflösbarer Hostname von Home Assistant. Vor dem Start erforderlich.
+  max_clients:
+    name: Maximale Clients
+  max_per_ip:
+    name: Maximale Clients je IP
+  idle_session_timeout:
+    name: Leerlaufzeit der Sitzung
+    description: Sekunden bis zum Schließen einer inaktiven Steuerverbindung.
+  data_connection_timeout:
+    name: Leerlaufzeit der Datenverbindung
+    description: Sekunden bis zum Schließen einer inaktiven Datenverbindung.
+  delay_failed_login:
+    name: Verzögerung nach Fehlanmeldung
+    description: Verzögerung in Sekunden nach einer fehlgeschlagenen Anmeldung.
+  retention_days:
+    name: Aufbewahrungszeit
+    description: Reguläre Aufnahmedateien nach dieser Anzahl Tage löschen. Null deaktiviert die Löschung.
+  log_level:
+    name: Protokollierungsstufe
+network:
+  21/tcp: Steuerport für explizites FTP/FTPS
+  30000/tcp: Passiver Datenport 30000 (externen Port unverändert lassen)
+  30001/tcp: Passiver Datenport 30001 (externen Port unverändert lassen)
+  30002/tcp: Passiver Datenport 30002 (externen Port unverändert lassen)
+  30003/tcp: Passiver Datenport 30003 (externen Port unverändert lassen)
+  30004/tcp: Passiver Datenport 30004 (externen Port unverändert lassen)
+  30005/tcp: Passiver Datenport 30005 (externen Port unverändert lassen)
+  30006/tcp: Passiver Datenport 30006 (externen Port unverändert lassen)
+  30007/tcp: Passiver Datenport 30007 (externen Port unverändert lassen)
+  30008/tcp: Passiver Datenport 30008 (externen Port unverändert lassen)
+  30009/tcp: Passiver Datenport 30009 (externen Port unverändert lassen)
+  30010/tcp: Passiver Datenport 30010 (externen Port unverändert lassen)
+  30011/tcp: Passiver Datenport 30011 (externen Port unverändert lassen)
+  30012/tcp: Passiver Datenport 30012 (externen Port unverändert lassen)
+  30013/tcp: Passiver Datenport 30013 (externen Port unverändert lassen)
+  30014/tcp: Passiver Datenport 30014 (externen Port unverändert lassen)
+  30015/tcp: Passiver Datenport 30015 (externen Port unverändert lassen)
+  30016/tcp: Passiver Datenport 30016 (externen Port unverändert lassen)
+  30017/tcp: Passiver Datenport 30017 (externen Port unverändert lassen)
+  30018/tcp: Passiver Datenport 30018 (externen Port unverändert lassen)
+  30019/tcp: Passiver Datenport 30019 (externen Port unverändert lassen)

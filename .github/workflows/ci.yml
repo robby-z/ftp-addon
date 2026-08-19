@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate and test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Validate YAML
+        run: |
+          python -m pip install --disable-pip-version-check yamllint==1.37.1
+          yamllint .
+      - name: Shellcheck
+        run: >-
+          shellcheck reolink_ftps/rootfs/etc/services.d/reolink-ftps/run
+          reolink_ftps/rootfs/etc/services.d/reolink-ftps/finish
+          tests/run_integration.sh tests/missing_anchor.sh tests/low_space.sh
+      - name: Python compile and unit/security tests
+        run: |
+          python -m py_compile reolink_ftps/rootfs/usr/local/bin/reolink-ftps tests/test_runtime.py tests/integration_ftps.py
+          python -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Home Assistant App metadata lint
+        uses: frenck/action-addon-linter@v2.21.0
+        with:
+          path: ./reolink_ftps
+
+  build-and-integrate:
+    name: Build amd64 and run live FTPS tests
+    runs-on: ubuntu-latest
+    needs: validate
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build amd64 image
+        run: docker build --platform linux/amd64 --tag reolink-ftps:test reolink_ftps
+      - name: Explicit FTPS, passive, isolation, read-only, and restart tests
+        run: tests/run_integration.sh reolink-ftps:test
+      - name: Missing-anchor startup rejection
+        run: tests/missing_anchor.sh reolink-ftps:test
+      - name: Low-space upload cutoff
+        run: tests/low_space.sh reolink-ftps:test
+
+  multiarch-build:
+    name: Build amd64 and aarch64
+    runs-on: ubuntu-latest
+    needs: validate
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build both supported architectures
+        uses: docker/build-push-action@v6
+        with:
+          context: ./reolink_ftps
+          platforms: linux/amd64,linux/arm64
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
