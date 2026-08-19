@@ -37,6 +37,6 @@ profile reolink_ftps flags=(attach_disconnected,mediate_deleted) {
   /etc/{passwd,group,shadow,gshadow,shells} rw,
   /etc/{passwd-,group-,shadow-,gshadow-} rw,
   /etc/vsftpd/{,**} rwk,
-  /etc/pam.d/vsftpd r,
+  /etc/pam.d/reolink-ftps rw,
   /etc/ssl/{,**} r,
 }

@@ -7,6 +7,7 @@ ARG BUILD_VERSION=1.0.0
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         openssl \
+        libpam-pwdfile \
         passwd \
         python3 \
         vsftpd \

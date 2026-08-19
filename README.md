@@ -101,7 +101,7 @@ There is currently no secure native Home Assistant selector for an arbitrary sub
 
 At low free space the App stops vsftpd entirely and resumes after recovery. This briefly blocks reads too, but reliably stops writes to existing nested camera directories. It never auto-deletes unless `retention_days` is positive.
 
-The App uses Home Assistant's supported Debian Trixie base because Alpine's vsftpd login child is unreliable with FTPS on some current amd64 container kernels. vsftpd's internal legacy seccomp filter and its nested network namespace are disabled for container-kernel compatibility; the App already runs in its own container network namespace, and Docker seccomp, AppArmor, chroot isolation, and Home Assistant Protection Mode remain active.
+The App uses Home Assistant's supported Debian Trixie base because Alpine's vsftpd login child is unreliable with FTPS on some current amd64 container kernels. The Home Assistant options password is never copied into a system account database; a salted hash is generated in a root-only, ephemeral PAM file at startup. vsftpd's internal legacy seccomp filter and its nested network namespace are disabled for container-kernel compatibility; the App already runs in its own container network namespace, and Docker seccomp, AppArmor, chroot isolation, and Home Assistant Protection Mode remain active.
 
 ## Reolink setup
 
