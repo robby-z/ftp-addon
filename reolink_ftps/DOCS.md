@@ -103,6 +103,8 @@ Leave both certificate fields blank to generate an RSA-3072, SHA-256 self-signed
 
 To use Home Assistant certificate files, set relative names below `/ssl`, usually `fullchain.pem` and `privkey.pem`. Absolute paths and traversal are rejected. The certificate is parsed and its public key is compared with the private key before vsftpd starts.
 
+Explicit FTPS uses TLS 1.2 for current Reolink and vsftpd interoperability. TLS 1.0 and 1.1 are obsolete and disabled; TLS 1.3 is disabled because vsftpd's split login process is unreliable with that protocol on some container kernels.
+
 TLS is required by default for both login and data. Plain FTP is available only by setting `tls.require_tls: false` and `tls.allow_plain_ftp: true`; startup displays a prominent warning. Plain FTP exposes credentials and recordings and should only be used for old firmware on a trusted isolated LAN. There is no silent downgrade, implicit FTPS, SFTP, SSH, port 990, or port 22.
 
 ## Passive networking

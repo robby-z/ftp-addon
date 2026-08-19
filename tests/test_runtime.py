@@ -181,6 +181,7 @@ class RuntimeTests(unittest.TestCase):
         self.assertIn("seccomp_sandbox=NO", text)
         self.assertIn("isolate_network=NO", text)
         self.assertIn("pam_service_name=reolink-ftps", text)
+        self.assertIn("ssl_tlsv1=YES", text)
         self.assertIn("secure_chroot_dir=/run/vsftpd/empty", text)
         self.assertIn("pasv_min_port=30000", text)
         self.assertIn("pasv_max_port=30019", text)

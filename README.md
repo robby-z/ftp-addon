@@ -116,7 +116,7 @@ Use one user per camera for separate credentials, directories, revocation, and t
 
 ## TLS, networking, and backups
 
-Blank certificate fields create a persistent RSA-3072 self-signed pair under App `/data`. To use Home Assistant TLS, enter relative `/ssl` names such as `fullchain.pem` and `privkey.pem`. Plain FTP requires the explicit combination `require_tls: false` and `allow_plain_ftp: true` and is only appropriate on a trusted isolated LAN.
+Blank certificate fields create a persistent RSA-3072 self-signed pair under App `/data`. To use Home Assistant TLS, enter relative `/ssl` names such as `fullchain.pem` and `privkey.pem`. Explicit FTPS is pinned to TLS 1.2 for current Reolink and vsftpd interoperability; TLS 1.0, 1.1, and the problematic vsftpd TLS 1.3 path are disabled. Plain FTP requires the explicit combination `require_tls: false` and `allow_plain_ftp: true` and is only appropriate on a trusted isolated LAN.
 
 Give Home Assistant a DHCP reservation or static address. For camera VLANs, allow only camera VLAN → Home Assistant IP → control TCP port and TCP 30000–30019. Never expose FTP/FTPS or its passive range directly to the public Internet; use a VPN.
 

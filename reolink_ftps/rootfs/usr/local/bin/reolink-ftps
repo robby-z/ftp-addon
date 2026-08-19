@@ -466,9 +466,10 @@ def remove_expired_files(root: Path, days: int) -> tuple[int, int]:
 
 
 class Supervisor:
-    def __init__(self, config: RuntimeConfig, config_path: Path):
+    def __init__(self, config: RuntimeConfig, config_path: Path, openssl_config: Path):
         self.config = config
         self.config_path = config_path
+        self.openssl_config = openssl_config
         self.stop = threading.Event()
         self.child: subprocess.Popen[str] | None = None
 
@@ -507,7 +508,11 @@ class Supervisor:
                 if self.child and self.child.returncode not in (None, 0, -signal.SIGTERM):
                     LOG.error("vsftpd exited unexpectedly with code %s", self.child.returncode)
                     return self.child.returncode or 1
-                self.child = subprocess.Popen(["/usr/sbin/vsftpd", str(self.config_path)], text=True)
+                environment = os.environ.copy()
+                environment["OPENSSL_CONF"] = str(self.openssl_config)
+                self.child = subprocess.Popen(
+                    ["/usr/sbin/vsftpd", str(self.config_path)], text=True, env=environment,
+                )
             now = time.time()
             retention = self.config.raw["retention_days"]
             if retention and now - last_retention >= 3600:
@@ -562,12 +567,21 @@ def main() -> int:
         runtime_dir = Path("/run/reolink-ftps")
         runtime_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         provision_users(config, data_dir, runtime_dir)
+        openssl_config = runtime_dir / "openssl.cnf"
+        atomic_write(
+            openssl_config,
+            "openssl_conf = reolink_ftps_init\n\n"
+            "[reolink_ftps_init]\nssl_conf = ssl_settings\n\n"
+            "[ssl_settings]\nsystem_default = tls_policy\n\n"
+            "[tls_policy]\nMinProtocol = TLSv1.2\nMaxProtocol = TLSv1.2\n",
+            0o600,
+        )
         secure_chroot = Path("/run/vsftpd/empty")
         secure_chroot.mkdir(mode=0o555, parents=True, exist_ok=True)
         os.chown(secure_chroot, 0, 0)
         secure_chroot.chmod(0o555)
         vsftpd_config = build_vsftpd_config(config, runtime_dir)
-        supervisor = Supervisor(config, vsftpd_config)
+        supervisor = Supervisor(config, vsftpd_config, openssl_config)
         signal.signal(signal.SIGTERM, supervisor.terminate)
         signal.signal(signal.SIGINT, supervisor.terminate)
         return supervisor.run()

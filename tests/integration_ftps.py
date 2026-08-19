@@ -21,7 +21,7 @@ def tls_login(username, password):
     ftp.login(username, password)
     ftp.prot_p()
     ftp.set_pasv(True)
-    assert ftp.sock.version() in {"TLSv1.2", "TLSv1.3"}, ftp.sock.version()
+    assert ftp.sock.version() == "TLSv1.2", ftp.sock.version()
     return ftp
 
 
