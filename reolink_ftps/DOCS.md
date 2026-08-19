@@ -95,7 +95,7 @@ Do **not** use **Move data disk** for this design: that moves Home Assistant's g
 
 The App maps only `/media` and `/share` read/write, `/ssl` read-only, and its automatic persistent `/data`. It has no device access, host filesystem, Docker socket, Supervisor API role, `full_access`, host networking, or privileged mode. Protection Mode stays enabled.
 
-The App uses Home Assistant's supported Debian Trixie base because Alpine's vsftpd login child is unreliable with FTPS on some current amd64 container kernels. vsftpd's own legacy seccomp sandbox is disabled for container-kernel compatibility. The container runtime's seccomp policy remains active, as do the AppArmor profile, per-user chroot, dropped login shells, mapped-storage boundaries, and Home Assistant Protection Mode.
+The App uses Home Assistant's supported Debian Trixie base because Alpine's vsftpd login child is unreliable with FTPS on some current amd64 container kernels. vsftpd's own legacy seccomp sandbox and nested network namespace are disabled for container-kernel compatibility. The App already has a container network namespace; the container runtime's seccomp policy remains active, as do the AppArmor profile, per-user chroot, dropped login shells, mapped-storage boundaries, and Home Assistant Protection Mode.
 
 ## TLS
 
