@@ -16,8 +16,8 @@ jobs:
     outputs:
       architectures: ${{ steps.info.outputs.architectures }}
       build_matrix: ${{ steps.matrix.outputs.matrix }}
-      description: ${{ steps.info.outputs.description }}
-      version: ${{ steps.info.outputs.version }}
+      description: ${{ fromJSON(steps.info.outputs.description) }}
+      version: ${{ fromJSON(steps.info.outputs.version) }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v7.0.1
