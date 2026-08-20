@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-VERSION = "1.0.0"
+VERSION = "0.9.0"
 RESERVED_USERS = {"root", "anonymous", "ftp", "nobody", "daemon", "bin", "sync"}
 USERNAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$")
 PATH_SEGMENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")

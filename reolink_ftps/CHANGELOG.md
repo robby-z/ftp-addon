@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.0.0
+## 0.9.0
 
 - Initial production release.
 - Explicit FTPS with persistent self-signed or Home Assistant `/ssl` certificates.

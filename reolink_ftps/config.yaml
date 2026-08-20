@@ -1,5 +1,5 @@
 name: Reolink FTPS Server
-version: "1.0.0"
+version: "0.9.0"
 slug: reolink_ftps
 description: Secure explicit FTPS server for Reolink cameras, powered by vsftpd.
 url: https://github.com/robby-z/ftp-addon/tree/main/reolink_ftps
