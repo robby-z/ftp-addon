@@ -4,11 +4,13 @@ import importlib.machinery
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -233,12 +235,29 @@ class RuntimeTests(unittest.TestCase):
         content = (self.data / "user_uids.json").read_text()
         self.assertNotIn("secret", content)
 
+    def test_storage_permissions_allow_login_traversal_without_parent_listing(self):
+        recording_root = self.media / "ReolinkSSD/reolink"
+        nested_home = recording_root / "site/front"
+        nested_home.mkdir(parents=True)
+        shared_parent_home = recording_root / "site"
+        runtime.configure_storage_permissions(
+            recording_root,
+            (shared_parent_home, nested_home),
+            group_gid=os.getgid(),
+            owner_uid=os.getuid(),
+        )
+        self.assertEqual(recording_root.stat().st_mode & 0o777, 0o710)
+        self.assertEqual(shared_parent_home.stat().st_mode & 0o777, 0o770)
+        self.assertEqual(nested_home.stat().st_mode & 0o777, 0o770)
+
     def test_options_json_parsing_and_free_space_use_recording_filesystem(self):
         options_path = self.data / "options.json"
         options_path.write_text(json.dumps(options()))
         loaded = runtime.load_options(options_path)
         config = self.prepare(loaded)
-        self.assertEqual(runtime.free_bytes(config.recording_root), os.statvfs(config.recording_root).f_bavail * os.statvfs(config.recording_root).f_frsize)
+        usage = shutil.disk_usage(config.recording_root)
+        with mock.patch.object(runtime.shutil, "disk_usage", return_value=usage):
+            self.assertEqual(runtime.free_bytes(config.recording_root), usage.free)
 
 
 if __name__ == "__main__":

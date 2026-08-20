@@ -351,6 +351,24 @@ def run_quiet(command: list[str], *, input_text: str | None = None) -> None:
         raise ConfigError(f"Container account provisioning failed while running {command[0]}") from err
 
 
+def configure_storage_permissions(
+    recording_root: Path, homes: tuple[Path, ...], *, group_gid: int = 20000, owner_uid: int = 0,
+) -> None:
+    """Allow FTP users to traverse app-managed parents and write only in their homes."""
+    root = recording_root.resolve(strict=True)
+    home_set = {home.resolve(strict=True) for home in homes}
+    managed = {root}
+    for home in home_set:
+        path_beneath(home, root, "FTP home directory")
+        current = home
+        while current != root:
+            managed.add(current)
+            current = current.parent
+    for directory in sorted(managed, key=lambda path: len(path.parts)):
+        os.chown(directory, owner_uid, group_gid)
+        os.chmod(directory, 0o2770 if directory in home_set else 0o2710)
+
+
 def provision_users(config: RuntimeConfig, data_dir: Path, runtime_dir: Path) -> None:
     try:
         subprocess.run(["getent", "group", "reolinkftp"], check=True, stdout=subprocess.DEVNULL)
@@ -361,8 +379,13 @@ def provision_users(config: RuntimeConfig, data_dir: Path, runtime_dir: Path) ->
     if shells.exists() and "/sbin/nologin" not in shells.read_text(encoding="utf-8").splitlines():
         with shells.open("a", encoding="utf-8") as handle:
             handle.write("/sbin/nologin\n")
+    homes = {
+        user.username: ensure_directory_chain(config.recording_root, PurePosixPath(user.directory))
+        for user in config.users
+    }
+    configure_storage_permissions(config.recording_root, tuple(homes.values()))
     for user in config.users:
-        home = ensure_directory_chain(config.recording_root, PurePosixPath(user.directory))
+        home = homes[user.username]
         try:
             subprocess.run(["id", user.username], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except subprocess.CalledProcessError:
@@ -371,8 +394,6 @@ def provision_users(config: RuntimeConfig, data_dir: Path, runtime_dir: Path) ->
                 "--home-dir", str(home), "--shell", "/sbin/nologin", user.username,
             ])
         run_quiet(["usermod", "--home", str(home), user.username])
-        os.chown(home, 0, 20000)
-        os.chmod(home, 0o2770)
 
     password_lines = []
     for user in config.users:
