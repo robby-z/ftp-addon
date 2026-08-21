@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.10.1
+
+- Add a recursive recording table with newest-first ordering, camera and date filters, search, sortable columns, and pagination.
+- Add explicit view, download, and confirmed delete actions for each indexed recording.
+- Maintain a rebuildable SQLite metadata index under App `/data`; recordings remain on the configured media disk.
+- Protect deletion with Ingress-only access, a per-start CSRF token, symlink/path confinement, and a write-settling delay.
+
 ## 0.10.0
 
 - Add a Home Assistant Ingress recording browser with per-user tabs and safe directory navigation.

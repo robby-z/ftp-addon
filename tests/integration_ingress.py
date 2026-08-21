@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Exercise the read-only recording browser through an Ingress-like client."""
+"""Exercise the recording browser through an Ingress-like client."""
 
 from __future__ import annotations
 
 import argparse
 import json
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -13,6 +14,12 @@ import urllib.request
 
 def open_url(url: str, *, headers: dict[str, str] | None = None):
     return urllib.request.urlopen(urllib.request.Request(url, headers=headers or {}), timeout=10)
+
+
+def post_url(url: str, *, headers: dict[str, str] | None = None):
+    return urllib.request.urlopen(
+        urllib.request.Request(url, headers=headers or {}, method="POST"), timeout=10,
+    )
 
 
 def main() -> int:
@@ -46,6 +53,27 @@ def main() -> int:
     assert [user["username"] for user in users] == ["camera_front", "camera_garden", "viewer"]
     assert all("password" not in user for user in users)
 
+    with open_url(f"{base}/api/meta") as response:
+        meta = json.load(response)
+    assert meta["cameras"] == ["camera_front", "camera_garden"]
+    assert meta["csrf_token"]
+
+    recordings = None
+    for _ in range(30):
+        with open_url(f"{base}/api/recordings") as response:
+            recordings = json.load(response)
+        if recordings["total"] == 2 and not recordings["status"]["scanning"]:
+            break
+        time.sleep(0.2)
+    assert recordings is not None and recordings["total"] == 2
+    assert [item["camera"] for item in recordings["items"]] == ["camera_garden", "camera_front"]
+
+    query = urllib.parse.urlencode({"camera": "camera_front", "q": "clip", "page_size": 1})
+    with open_url(f"{base}/api/recordings?{query}") as response:
+        filtered = json.load(response)
+    assert filtered["total"] == 1
+    assert filtered["items"][0]["relative_path"] == "day/clip.mp4"
+
     list_query = urllib.parse.urlencode({"user": "camera_front", "path": "day"})
     with open_url(f"{base}/api/list?{list_query}") as response:
         listing = json.load(response)
@@ -70,7 +98,26 @@ def main() -> int:
     else:
         raise AssertionError("Traversal request unexpectedly succeeded")
 
-    print("Ingress browser, listing, isolation, and range-streaming checks passed")
+    delete_query = urllib.parse.urlencode({"camera": "camera_garden", "path": "day/garden.mp4"})
+    try:
+        post_url(f"{base}/api/delete?{delete_query}")
+    except urllib.error.HTTPError as err:
+        try:
+            assert err.code == 403
+        finally:
+            err.close()
+    else:
+        raise AssertionError("Delete without CSRF token unexpectedly succeeded")
+
+    with post_url(
+        f"{base}/api/delete?{delete_query}",
+        headers={"X-Reolink-CSRF": meta["csrf_token"]},
+    ) as response:
+        assert json.load(response)["deleted"] is True
+    with open_url(f"{base}/api/recordings") as response:
+        assert json.load(response)["total"] == 1
+
+    print("Ingress table, filters, deletion, isolation, and range-streaming checks passed")
     return 0
 
 

@@ -1,5 +1,5 @@
 name: Reolink FTPS Server
-version: "0.10.0"
+version: "0.10.1"
 slug: reolink_ftps
 description: Secure explicit FTPS server and Ingress recording browser for Reolink cameras.
 url: https://github.com/robby-z/ftp-addon/tree/main/reolink_ftps

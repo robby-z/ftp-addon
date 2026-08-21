@@ -237,6 +237,7 @@ class RuntimeTests(unittest.TestCase):
         index.write_text("<script>const base=__INGRESS_PATH__;</script>")
         browser = runtime.RecordingBrowser(
             config, host="127.0.0.1", port=0, allowed_clients={"127.0.0.1"}, index_path=index,
+            data_dir=self.data,
         )
         browser.start()
         base = f"http://127.0.0.1:{browser.port}"
@@ -279,6 +280,7 @@ class RuntimeTests(unittest.TestCase):
 
         denied = runtime.RecordingBrowser(
             config, host="127.0.0.1", port=0, allowed_clients={"192.0.2.1"}, index_path=index,
+            data_dir=self.data,
         )
         denied.start()
         try:
@@ -288,6 +290,141 @@ class RuntimeTests(unittest.TestCase):
             caught.exception.close()
         finally:
             denied.stop()
+
+    def test_recording_index_filters_sorts_paginates_and_persists(self):
+        config = self.prepare()
+        camera_root = config.recording_root / "front"
+        clips = [
+            ("2026/08/older.mp4", b"old", 300),
+            ("2026/08/newer.MKV", b"newer", 100),
+            ("other/newest.mp4", b"newest!", 50),
+        ]
+        now = time.time()
+        for relative, content, age in clips:
+            path = camera_root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+            os.utime(path, (now - age, now - age))
+        (camera_root / "ignored.txt").write_text("not a video")
+        fresh = camera_root / "active.mp4"
+        fresh.write_bytes(b"active upload")
+        outside = self.share / "outside.mp4"
+        outside.write_bytes(b"outside")
+        (camera_root / "linked.mp4").symlink_to(outside)
+
+        sources = runtime.browser_camera_roots(config)
+        self.assertEqual(sources, {"camera_front": camera_root.resolve()})
+        database = self.data / "recordings-index.sqlite3"
+        index = runtime.RecordingIndex(database, sources)
+        index._scan_all()
+
+        result = index.query(page_size=2)
+        self.assertEqual(result["total"], 3)
+        self.assertEqual(result["pages"], 2)
+        self.assertEqual([item["name"] for item in result["items"]], ["newest.mp4", "newer.MKV"])
+        self.assertEqual(index.query(search="older")["total"], 1)
+        self.assertEqual(index.query(sort="size", direction="asc")["items"][0]["name"], "older.mp4")
+        self.assertEqual(index.query(from_time=int(now - 150))["total"], 2)
+        self.assertEqual(index.query(to_time=int(now - 150))["total"], 1)
+        self.assertFalse(index.indexed("camera_front", "active.mp4"))
+        self.assertFalse(index.indexed("camera_front", "linked.mp4"))
+
+        reopened = runtime.RecordingIndex(database, sources)
+        self.assertEqual(reopened.query()["total"], 3)
+
+    def test_recording_index_rebuilds_corrupt_database(self):
+        config = self.prepare()
+        database = self.data / "recordings-index.sqlite3"
+        database.write_bytes(b"not sqlite")
+        index = runtime.RecordingIndex(database, runtime.browser_camera_roots(config))
+        self.assertEqual(index.query()["total"], 0)
+
+    def test_recording_delete_requires_csrf_index_and_stable_video(self):
+        config = self.prepare()
+        root = config.recording_root / "front"
+        recording = root / "day/clip.mp4"
+        recording.parent.mkdir()
+        recording.write_bytes(b"0123456789")
+        active = root / "day/active.mp4"
+        active.write_bytes(b"finished first")
+        replaced = root / "day/replaced.mp4"
+        replaced.write_bytes(b"inside")
+        old = time.time() - 60
+        for path in (recording, active, replaced):
+            os.utime(path, (old, old))
+        index_html = self.root / "index.html"
+        index_html.write_text("test")
+        browser = runtime.RecordingBrowser(
+            config, host="127.0.0.1", port=0, allowed_clients={"127.0.0.1"},
+            index_path=index_html, data_dir=self.data, scan_interval=3600,
+        )
+        browser.index._scan_all()
+        active.write_bytes(b"upload resumed")
+        replaced.unlink()
+        outside = self.share / "outside.mp4"
+        outside.write_bytes(b"outside")
+        replaced.symlink_to(outside)
+        browser.index.stop_event.set()  # Keep the prepared race-condition snapshot stable.
+        browser.start()
+        base = f"http://127.0.0.1:{browser.port}"
+        query = urllib.parse.urlencode({"camera": "camera_front", "path": "day/clip.mp4"})
+        try:
+            with urllib.request.urlopen(f"{base}/api/meta") as response:
+                meta = json.load(response)
+            self.assertEqual(meta["cameras"], ["camera_front"])
+            with urllib.request.urlopen(f"{base}/api/recordings") as response:
+                self.assertEqual(json.load(response)["total"], 3)
+
+            active_query = urllib.parse.urlencode({"camera": "camera_front", "path": "day/active.mp4"})
+            active_delete = urllib.request.Request(
+                f"{base}/api/delete?{active_query}", method="POST",
+                headers={"X-Reolink-CSRF": meta["csrf_token"]},
+            )
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                urllib.request.urlopen(active_delete)
+            self.assertEqual(caught.exception.code, 409)
+            caught.exception.close()
+            self.assertTrue(active.exists())
+
+            replaced_query = urllib.parse.urlencode({"camera": "camera_front", "path": "day/replaced.mp4"})
+            replaced_delete = urllib.request.Request(
+                f"{base}/api/delete?{replaced_query}", method="POST",
+                headers={"X-Reolink-CSRF": meta["csrf_token"]},
+            )
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                urllib.request.urlopen(replaced_delete)
+            self.assertEqual(caught.exception.code, 404)
+            caught.exception.close()
+            self.assertEqual(outside.read_bytes(), b"outside")
+
+            missing_token = urllib.request.Request(f"{base}/api/delete?{query}", method="POST")
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                urllib.request.urlopen(missing_token)
+            self.assertEqual(caught.exception.code, 403)
+            caught.exception.close()
+            self.assertTrue(recording.exists())
+
+            delete = urllib.request.Request(
+                f"{base}/api/delete?{query}", method="POST",
+                headers={"X-Reolink-CSRF": meta["csrf_token"]},
+            )
+            with urllib.request.urlopen(delete) as response:
+                self.assertTrue(json.load(response)["deleted"])
+            self.assertFalse(recording.exists())
+            with urllib.request.urlopen(f"{base}/api/recordings") as response:
+                self.assertEqual(json.load(response)["total"], 1)
+
+            traversal = urllib.parse.urlencode({"camera": "camera_front", "path": "../outside.mp4"})
+            unsafe = urllib.request.Request(
+                f"{base}/api/delete?{traversal}", method="POST",
+                headers={"X-Reolink-CSRF": meta["csrf_token"]},
+            )
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                urllib.request.urlopen(unsafe)
+            self.assertEqual(caught.exception.code, 404)
+            caught.exception.close()
+        finally:
+            browser.stop()
 
     def test_plain_ftp_needs_explicit_opt_in(self):
         value = options()

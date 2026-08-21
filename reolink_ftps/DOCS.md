@@ -15,9 +15,9 @@ The App intentionally refuses to start with an empty user list, blank PASV addre
 
 ## Recording browser
 
-Select **Open Web UI** on the App page to browse recordings inside Home Assistant. Each configured FTP user has a separate tab rooted at that user's directory. The interface is read-only: it can list, preview, stream, seek, and download recordings but cannot rename or delete them.
+Select **Open Web UI** on the App page to manage recordings inside Home Assistant. The default recursive table combines all camera directories, orders recordings newest first, and supports camera, text, and date filters, sortable columns, and pagination. Each row can be viewed, downloaded, or deleted after an explicit irreversible-action confirmation. The original per-user folder view remains available in the **Ordner** tab.
 
-Home Assistant Ingress authenticates the browser and proxies its internal port; port 8099 is not published to the LAN. Symbolic links and paths outside the configured user roots are refused. Direct MP4 playback depends on the browser codec support. H.264 is broadly compatible, while H.265/HEVC may require downloading the original recording and opening it in a compatible player.
+Home Assistant Ingress authenticates the browser and proxies its internal port; port 8099 is not published to the LAN. Symbolic links and paths outside the configured user roots are refused. Deletion additionally requires a per-start CSRF token and is limited to stable video files already present in the index, so an active upload cannot be removed. The rebuildable SQLite index is stored under App `/data`; it contains metadata only, while recordings remain on the configured media disk. Direct MP4 playback depends on browser codec support. H.264 is broadly compatible, while H.265/HEVC may require downloading the original recording and opening it in a compatible player.
 
 ## Configuration example
 

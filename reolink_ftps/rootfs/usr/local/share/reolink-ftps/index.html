@@ -5,135 +5,70 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <title>Reolink-Aufnahmen</title>
   <style>
-    :root { color-scheme: light dark; --primary:#03a9f4; --card:#fff; --bg:#f5f5f5; --text:#212121; --muted:#6b7280; --line:#dedede; --hover:#eef7fc; }
-    @media (prefers-color-scheme:dark) { :root { --card:#1c1c1c; --bg:#111; --text:#eee; --muted:#a3a3a3; --line:#383838; --hover:#173342; } }
-    * { box-sizing:border-box; }
-    body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
-    header { position:sticky; top:0; z-index:5; padding:18px 20px 0; background:var(--card); border-bottom:1px solid var(--line); }
-    h1 { margin:0 0 14px; font-size:22px; font-weight:500; }
-    #tabs { display:flex; gap:4px; overflow:auto; scrollbar-width:thin; }
-    .tab { border:0; border-bottom:3px solid transparent; padding:10px 14px; color:var(--muted); background:transparent; font:inherit; white-space:nowrap; cursor:pointer; }
-    .tab.active { color:var(--primary); border-color:var(--primary); font-weight:600; }
-    main { max-width:1200px; margin:18px auto; padding:0 18px 40px; }
-    .card { overflow:hidden; background:var(--card); border:1px solid var(--line); border-radius:12px; box-shadow:0 2px 8px #00000012; }
-    #crumbs { display:flex; align-items:center; gap:6px; min-height:52px; padding:8px 14px; border-bottom:1px solid var(--line); overflow:auto; }
-    .crumb { border:0; padding:6px 7px; border-radius:6px; color:var(--primary); background:transparent; font:inherit; cursor:pointer; white-space:nowrap; }
-    .crumb:hover, .entry:hover { background:var(--hover); }
-    #entries { min-height:120px; }
-    .entry { display:grid; grid-template-columns:34px minmax(0,1fr) auto auto; gap:10px; align-items:center; width:100%; padding:11px 14px; border:0; border-bottom:1px solid var(--line); color:inherit; background:transparent; text-align:left; font:inherit; cursor:pointer; }
-    .entry:last-child { border-bottom:0; }
-    .icon { font-size:20px; text-align:center; }
-    .name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .meta { color:var(--muted); font-size:12px; white-space:nowrap; }
-    .state { padding:34px 18px; color:var(--muted); text-align:center; }
-    dialog { width:min(1000px,calc(100% - 24px)); max-height:calc(100vh - 24px); padding:0; border:0; border-radius:12px; color:var(--text); background:var(--card); box-shadow:0 16px 60px #0008; }
-    dialog::backdrop { background:#000a; }
-    .viewer-head { display:flex; align-items:center; gap:12px; padding:12px 16px; border-bottom:1px solid var(--line); }
-    .viewer-title { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:600; }
-    .action { border:1px solid var(--line); border-radius:8px; padding:7px 10px; color:inherit; background:transparent; text-decoration:none; cursor:pointer; }
-    .viewer-body { display:grid; place-items:center; min-height:240px; padding:12px; background:#000; }
-    video, audio, .preview-image { display:block; max-width:100%; max-height:calc(100vh - 130px); }
-    video { width:100%; }
-    .hint { margin:0; padding:12px 16px; color:var(--muted); background:var(--card); }
-    @media (max-width:640px) { header { padding-left:12px; padding-right:12px; } main { padding:0 8px 24px; margin-top:8px; } .entry { grid-template-columns:30px minmax(0,1fr) auto; } .modified { display:none; } }
+    :root{color-scheme:light dark;--primary:#03a9f4;--danger:#d32f2f;--card:#fff;--bg:#f5f5f5;--text:#212121;--muted:#687078;--line:#dedede;--hover:#eef7fc}
+    @media(prefers-color-scheme:dark){:root{--card:#1c1c1c;--bg:#111;--text:#eee;--muted:#aaa;--line:#383838;--hover:#173342;--danger:#ff7770}}
+    *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+    header{position:sticky;top:0;z-index:5;padding:16px 20px 0;background:var(--card);border-bottom:1px solid var(--line)} h1{margin:0 0 10px;font-size:22px;font-weight:500}
+    .views,.tabs{display:flex;gap:4px;overflow:auto}.view,.tab{border:0;border-bottom:3px solid transparent;padding:10px 14px;color:var(--muted);background:transparent;font:inherit;white-space:nowrap;cursor:pointer}.view.active,.tab.active{color:var(--primary);border-color:var(--primary);font-weight:600}
+    main{max-width:1500px;margin:18px auto;padding:0 18px 40px}.card{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:0 2px 8px #00000012;overflow:hidden}
+    .filters{display:grid;grid-template-columns:minmax(180px,2fr) minmax(150px,1fr) repeat(2,minmax(145px,1fr)) auto;gap:10px;padding:14px;border-bottom:1px solid var(--line)}
+    label{display:grid;gap:4px;color:var(--muted);font-size:12px}input,select{min-width:0;border:1px solid var(--line);border-radius:7px;padding:8px;color:var(--text);background:var(--card);font:inherit}.filter-actions{display:flex;align-items:end;gap:6px}
+    button,.action{border:1px solid var(--line);border-radius:8px;padding:7px 10px;color:inherit;background:transparent;font:inherit;text-decoration:none;cursor:pointer}button:hover,.action:hover{background:var(--hover)}button:disabled{opacity:.5;cursor:default}.primary{color:var(--primary)}.danger{color:var(--danger)}
+    .status{display:flex;gap:10px;align-items:center;min-height:40px;padding:7px 14px;color:var(--muted);border-bottom:1px solid var(--line)}#summary{flex:1}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse}th,td{padding:10px 12px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}th{position:sticky;top:0;background:var(--card);color:var(--muted);font-size:12px}th button{width:100%;padding:0;border:0;text-align:left;color:inherit}.filename,.directory{max-width:390px;overflow:hidden;text-overflow:ellipsis}.actions{display:flex;gap:6px}.state{padding:34px 18px;color:var(--muted);text-align:center}.pager{display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:10px 14px}.pager select{padding:6px}
+    #folder-view{display:none}.tabs{padding:0 12px;border-bottom:1px solid var(--line)}#crumbs{display:flex;align-items:center;gap:6px;min-height:50px;padding:8px 14px;border-bottom:1px solid var(--line);overflow:auto}.crumb{border:0;color:var(--primary)}.entry{display:grid;grid-template-columns:34px minmax(0,1fr) auto auto;gap:10px;align-items:center;width:100%;padding:11px 14px;border:0;border-bottom:1px solid var(--line);border-radius:0;text-align:left}.name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.meta{color:var(--muted);font-size:12px}
+    dialog{width:min(1000px,calc(100% - 24px));max-height:calc(100vh - 24px);padding:0;border:0;border-radius:12px;color:var(--text);background:var(--card);box-shadow:0 16px 60px #0008}dialog::backdrop{background:#000a}.dialog-head{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line)}.dialog-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}.viewer-body{display:grid;place-items:center;min-height:240px;padding:12px;background:#000}video,audio,.preview-image{display:block;max-width:100%;max-height:calc(100vh - 140px)}video{width:100%}.hint{margin:0;padding:12px 16px;color:var(--muted)}.confirm-body{padding:20px}.confirm-actions{display:flex;justify-content:flex-end;gap:8px;padding:0 20px 20px}
+    @media(max-width:850px){.filters{grid-template-columns:1fr 1fr}.search{grid-column:1/-1}.filter-actions{align-items:center}.directory{display:none}}@media(max-width:600px){header{padding-left:10px;padding-right:10px}main{padding:0 7px 24px;margin-top:8px}.filters{grid-template-columns:1fr}.search{grid-column:auto}.modified-folder{display:none}th,td{padding:9px 8px}.filename{max-width:180px}.actions{gap:3px}.action-label{display:none}}
   </style>
 </head>
 <body>
-  <header><h1>Reolink-Aufnahmen</h1><nav id="tabs" aria-label="FTP-Benutzer"></nav></header>
-  <main><section class="card"><nav id="crumbs" aria-label="Verzeichnispfad"></nav><div id="entries"><div class="state">Lade Aufnahmen …</div></div></section></main>
-  <dialog id="viewer">
-    <div class="viewer-head"><span class="viewer-title" id="viewer-title"></span><a class="action" id="download" download>Herunterladen</a><button class="action" id="close" type="button">Schließen</button></div>
-    <div class="viewer-body" id="viewer-body"></div>
-    <p class="hint" id="viewer-hint">Falls das Video nicht startet, verwendet die Kamera möglicherweise H.265/HEVC, das nicht jeder Browser wiedergeben kann. Die Originaldatei kann weiterhin heruntergeladen werden.</p>
-  </dialog>
+  <header><h1>Reolink-Aufnahmen</h1><nav class="views"><button class="view active" data-view="recordings">Alle Aufnahmen</button><button class="view" data-view="folder">Ordner</button></nav></header>
+  <main>
+    <section id="recordings-view" class="card">
+      <form id="filters" class="filters">
+        <label class="search">Datei oder Pfad<input id="search" type="search" placeholder="Aufnahmen filtern …" maxlength="200"></label>
+        <label>Kamera<select id="camera"><option value="">Alle Kameras</option></select></label>
+        <label>Von<input id="from" type="date"></label><label>Bis<input id="to" type="date"></label>
+        <div class="filter-actions"><button class="primary" type="submit">Filtern</button><button id="reset" type="button">Zurücksetzen</button><button id="refresh" type="button" title="Datenträger neu einlesen">↻</button></div>
+      </form>
+      <div class="status"><span id="summary">Index wird geladen …</span><span id="scan-status"></span></div>
+      <div class="table-wrap"><table><thead><tr><th><button data-sort="modified">Zeitpunkt</button></th><th><button data-sort="camera">Kamera</button></th><th><button data-sort="name">Datei</button></th><th><button data-sort="size">Größe</button></th><th class="directory"><button data-sort="path">Ordner</button></th><th>Aktionen</th></tr></thead><tbody id="recordings"><tr><td colspan="6" class="state">Lade Aufnahmen …</td></tr></tbody></table></div>
+      <div class="pager"><label>Pro Seite <select id="page-size"><option>25</option><option selected>50</option><option>100</option><option>200</option></select></label><button id="previous" type="button">‹ Zurück</button><span id="page-label"></span><button id="next" type="button">Weiter ›</button></div>
+    </section>
+    <section id="folder-view" class="card"><nav id="tabs" class="tabs" aria-label="FTP-Benutzer"></nav><nav id="crumbs"></nav><div id="entries"><div class="state">Lade Ordner …</div></div></section>
+  </main>
+  <dialog id="viewer"><div class="dialog-head"><span class="dialog-title" id="viewer-title"></span><a class="action" id="viewer-download" download>Herunterladen</a><button id="viewer-close" type="button">Schließen</button></div><div class="viewer-body" id="viewer-body"></div><p class="hint" id="viewer-hint">Falls das Video nicht startet, verwendet die Kamera möglicherweise H.265/HEVC. Die Originaldatei kann weiterhin heruntergeladen werden.</p></dialog>
+  <dialog id="confirm"><div class="dialog-head"><span class="dialog-title">Aufnahme löschen?</span></div><div class="confirm-body"><p id="confirm-text"></p><p><strong>Diese Aktion kann nicht rückgängig gemacht werden.</strong></p></div><div class="confirm-actions"><button id="cancel-delete" type="button">Abbrechen</button><button id="confirm-delete" class="danger" type="button">Endgültig löschen</button></div></dialog>
   <script>
-    const INGRESS_PATH = __INGRESS_PATH__;
-    const basePath = INGRESS_PATH ? INGRESS_PATH.replace(/\/?$/, '/') : new URL('.', location.href).pathname;
-    const state = { users: [], user: '', path: '' };
-    const tabs = document.querySelector('#tabs');
-    const crumbs = document.querySelector('#crumbs');
-    const entries = document.querySelector('#entries');
-    const viewer = document.querySelector('#viewer');
-    const viewerBody = document.querySelector('#viewer-body');
-    const viewerHint = document.querySelector('#viewer-hint');
-
-    function endpoint(path, params = {}) {
-      const url = new URL(basePath + path.replace(/^\//, ''), location.origin);
-      for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
-      return url.toString();
-    }
-    function formatSize(bytes) {
-      if (bytes == null) return '';
-      const units = ['B','KB','MB','GB','TB']; let value = bytes; let unit = 0;
-      while (value >= 1000 && unit < units.length - 1) { value /= 1000; unit++; }
-      return `${value.toFixed(unit ? 1 : 0)} ${units[unit]}`;
-    }
-    function formatDate(seconds) { return new Date(seconds * 1000).toLocaleString(); }
-    function button(className, text, click) {
-      const element = document.createElement('button'); element.type = 'button'; element.className = className; element.textContent = text; element.addEventListener('click', click); return element;
-    }
-    async function request(path, params) {
-      const response = await fetch(endpoint(path, params), { cache:'no-store' });
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
-      return body;
-    }
-    function renderTabs() {
-      tabs.replaceChildren();
-      for (const user of state.users) {
-        const tab = button(`tab${user.username === state.user ? ' active' : ''}`, user.username, () => { state.user = user.username; state.path = ''; renderTabs(); loadDirectory(); });
-        tab.title = user.directory; tabs.append(tab);
-      }
-    }
-    function renderCrumbs() {
-      crumbs.replaceChildren();
-      crumbs.append(button('crumb', state.user || 'Aufnahmen', () => { state.path = ''; loadDirectory(); }));
-      let current = '';
-      for (const part of state.path.split('/').filter(Boolean)) {
-        crumbs.append(document.createTextNode('›'));
-        current = current ? `${current}/${part}` : part;
-        const target = current;
-        crumbs.append(button('crumb', part, () => { state.path = target; loadDirectory(); }));
-      }
-    }
-    function renderEntries(items) {
-      entries.replaceChildren();
-      if (!items.length) { const empty = document.createElement('div'); empty.className = 'state'; empty.textContent = 'Dieses Verzeichnis ist leer.'; entries.append(empty); return; }
-      for (const item of items) {
-        const row = button('entry', '', () => item.type === 'directory' ? openDirectory(item.path) : openMedia(item));
-        const icon = document.createElement('span'); icon.className = 'icon'; icon.textContent = item.type === 'directory' ? '📁' : item.mime?.startsWith('video/') ? '🎬' : item.mime?.startsWith('image/') ? '🖼️' : '📄';
-        const name = document.createElement('span'); name.className = 'name'; name.textContent = item.name;
-        const modified = document.createElement('span'); modified.className = 'meta modified'; modified.textContent = formatDate(item.modified);
-        const size = document.createElement('span'); size.className = 'meta'; size.textContent = formatSize(item.size);
-        row.append(icon, name, modified, size); entries.append(row);
-      }
-    }
-    function openDirectory(path) { state.path = path; loadDirectory(); }
-    async function loadDirectory() {
-      renderCrumbs(); entries.innerHTML = '<div class="state">Lade Aufnahmen …</div>';
-      try { const data = await request('api/list', { user:state.user, path:state.path }); renderEntries(data.entries); }
-      catch (error) { entries.innerHTML = ''; const message = document.createElement('div'); message.className = 'state'; message.textContent = `Fehler: ${error.message}`; entries.append(message); }
-    }
-    function openMedia(item) {
-      const url = endpoint('media', { user:state.user, path:item.path });
-      document.querySelector('#viewer-title').textContent = item.name;
-      const download = document.querySelector('#download'); download.href = url; download.download = item.name;
-      viewerBody.replaceChildren(); viewerHint.hidden = true;
-      let media;
-      if (item.mime?.startsWith('video/')) { media = document.createElement('video'); media.controls = true; media.autoplay = true; media.playsInline = true; viewerHint.hidden = false; media.addEventListener('error', () => { viewerHint.hidden = false; }); }
-      else if (item.mime?.startsWith('image/')) { media = document.createElement('img'); media.className = 'preview-image'; media.alt = item.name; }
-      else if (item.mime?.startsWith('audio/')) { media = document.createElement('audio'); media.controls = true; media.autoplay = true; }
-      else { media = document.createElement('p'); media.className = 'state'; media.textContent = 'Für diesen Dateityp ist keine Vorschau verfügbar.'; }
-      if ('src' in media) media.src = url;
-      viewerBody.append(media); viewer.showModal();
-    }
-    function closeViewer() { for (const media of viewerBody.querySelectorAll('video,audio')) { media.pause(); media.removeAttribute('src'); media.load(); } viewer.close(); }
-    document.querySelector('#close').addEventListener('click', closeViewer);
-    viewer.addEventListener('click', event => { if (event.target === viewer) closeViewer(); });
-    (async () => {
-      try { const data = await request('api/users'); state.users = data.users; if (!state.users.length) throw new Error('Keine Benutzer konfiguriert'); state.user = state.users[0].username; renderTabs(); loadDirectory(); }
-      catch (error) { entries.innerHTML = ''; const message = document.createElement('div'); message.className = 'state'; message.textContent = `Fehler: ${error.message}`; entries.append(message); }
-    })();
+    const INGRESS_PATH=__INGRESS_PATH__;
+    const basePath=INGRESS_PATH?INGRESS_PATH.replace(/\/?$/,'/'):new URL('.',location.href).pathname;
+    const state={cameras:[],users:[],camera:'',user:'',path:'',q:'',from:'',to:'',sort:'modified',direction:'desc',page:1,pageSize:50,pages:1,csrf:'',pendingDelete:null,folderLoaded:false,poll:null};
+    const $=selector=>document.querySelector(selector);
+    function endpoint(path,params={}){const url=new URL(basePath+path.replace(/^\//,''),location.origin);for(const [key,value] of Object.entries(params)){if(value!==''&&value!=null)url.searchParams.set(key,value)}return url.toString()}
+    async function request(path,params={},options={}){const response=await fetch(endpoint(path,params),{cache:'no-store',...options});let body={};try{body=await response.json()}catch{}if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);return body}
+    function makeButton(className,text,click){const el=document.createElement('button');el.type='button';el.className=className;el.textContent=text;el.addEventListener('click',click);return el}
+    function cameraLabel(value){return value.replace(/^ftp-camera-/i,'').replace(/[-_]+/g,' ')}
+    function formatSize(bytes){const units=['B','KB','MB','GB','TB'];let value=bytes,unit=0;while(value>=1000&&unit<4){value/=1000;unit++}return`${value.toFixed(unit?1:0)} ${units[unit]}`}
+    function formatDate(seconds){return new Date(seconds*1000).toLocaleString()}
+    function dayStart(value){return value?Math.floor(new Date(`${value}T00:00:00`).getTime()/1000):''}function dayEnd(value){return value?Math.floor(new Date(`${value}T23:59:59`).getTime()/1000):''}
+    function mediaUrl(item){return endpoint('media',{user:item.camera,path:item.relative_path})}
+    function setSortLabels(){for(const button of document.querySelectorAll('th button[data-sort]')){const active=button.dataset.sort===state.sort;button.textContent=button.textContent.replace(/[ ↑↓]$/,'')+(active?(state.direction==='asc'?' ↑':' ↓'):'')}}
+    async function loadRecordings(){const body=$('#recordings');body.innerHTML='<tr><td colspan="6" class="state">Lade Aufnahmen …</td></tr>';try{const data=await request('api/recordings',{camera:state.camera,q:state.q,from:dayStart(state.from),to:dayEnd(state.to),sort:state.sort,direction:state.direction,page:state.page,page_size:state.pageSize});if(state.page>data.pages){state.page=data.pages;return loadRecordings()}state.pages=data.pages;renderRecordings(data.items);$('#summary').textContent=`${data.total.toLocaleString()} Aufnahme${data.total===1?'':'n'}`;$('#scan-status').textContent=data.status.scanning?'Datenträger wird eingelesen …':data.status.error?`Indexfehler: ${data.status.error}`:'';$('#page-label').textContent=`Seite ${state.page} von ${data.pages}`;$('#previous').disabled=state.page<=1;$('#next').disabled=state.page>=data.pages;if(data.status.scanning){clearTimeout(state.poll);state.poll=setTimeout(loadRecordings,2000)}}catch(error){body.innerHTML=`<tr><td colspan="6" class="state"></td></tr>`;body.querySelector('td').textContent=`Fehler: ${error.message}`}}
+    function renderRecordings(items){const body=$('#recordings');body.replaceChildren();if(!items.length){body.innerHTML='<tr><td colspan="6" class="state">Keine passenden Aufnahmen gefunden.</td></tr>';return}for(const item of items){const row=document.createElement('tr');const values=[formatDate(item.modified),cameraLabel(item.camera),item.name,formatSize(item.size),item.directory==='.'?'':item.directory];values.forEach((value,index)=>{const cell=document.createElement('td');cell.textContent=value;if(index===2){cell.className='filename';cell.title=item.relative_path}if(index===4){cell.className='directory';cell.title=value}row.append(cell)});const actions=document.createElement('td');actions.className='actions';actions.append(makeButton('primary','▶︎ Ansehen',()=>openMedia(item)));const download=document.createElement('a');download.className='action';download.href=mediaUrl(item);download.download=item.name;download.textContent='↓ Herunterladen';actions.append(download,makeButton('danger','Löschen',()=>askDelete(item)));row.append(actions);body.append(row)}}
+    function openMedia(item){const url=mediaUrl(item);$('#viewer-title').textContent=`${cameraLabel(item.camera)} · ${item.name}`;$('#viewer-download').href=url;$('#viewer-download').download=item.name;const container=$('#viewer-body');container.replaceChildren();let media;if(item.mime?.startsWith('image/')){media=document.createElement('img');media.className='preview-image';media.alt=item.name}else if(item.mime?.startsWith('audio/')){media=document.createElement('audio');media.controls=true;media.autoplay=true}else if(item.mime?.startsWith('video/')||!item.mime){media=document.createElement('video');media.controls=true;media.autoplay=true;media.playsInline=true}else{media=document.createElement('p');media.className='state';media.textContent='Für diesen Dateityp ist keine Vorschau verfügbar.'}if('src' in media)media.src=url;container.append(media);$('#viewer').showModal()}
+    function closeViewer(){for(const media of $('#viewer-body').querySelectorAll('video,audio')){media.pause();media.removeAttribute('src');media.load()}$('#viewer').close()}
+    function askDelete(item){state.pendingDelete=item;$('#confirm-text').textContent=`„${item.name}“ von ${cameraLabel(item.camera)} wird dauerhaft vom Datenträger entfernt.`;$('#confirm').showModal()}
+    async function deleteRecording(){const item=state.pendingDelete;if(!item)return;const button=$('#confirm-delete');button.disabled=true;button.textContent='Lösche …';try{await request('api/delete',{camera:item.camera,path:item.relative_path},{method:'POST',headers:{'X-Reolink-CSRF':state.csrf}});$('#confirm').close();state.pendingDelete=null;await loadRecordings()}catch(error){alert(`Löschen fehlgeschlagen: ${error.message}`)}finally{button.disabled=false;button.textContent='Endgültig löschen'}}
+    function renderTabs(){const tabs=$('#tabs');tabs.replaceChildren();for(const user of state.users){tabs.append(makeButton(`tab${user.username===state.user?' active':''}`,cameraLabel(user.username),()=>{state.user=user.username;state.path='';renderTabs();loadDirectory()}))}}
+    function renderCrumbs(){const crumbs=$('#crumbs');crumbs.replaceChildren();crumbs.append(makeButton('crumb',cameraLabel(state.user)||'Aufnahmen',()=>{state.path='';loadDirectory()}));let current='';for(const part of state.path.split('/').filter(Boolean)){crumbs.append(document.createTextNode('›'));current=current?`${current}/${part}`:part;const target=current;crumbs.append(makeButton('crumb',part,()=>{state.path=target;loadDirectory()}))}}
+    async function loadDirectory(){renderCrumbs();const entries=$('#entries');entries.innerHTML='<div class="state">Lade Ordner …</div>';try{const data=await request('api/list',{user:state.user,path:state.path});entries.replaceChildren();if(!data.entries.length){entries.innerHTML='<div class="state">Dieses Verzeichnis ist leer.</div>';return}for(const item of data.entries){const row=makeButton('entry','',()=>item.type==='directory'?(state.path=item.path,loadDirectory()):openMedia({camera:state.user,relative_path:item.path,name:item.name,mime:item.mime}));const icon=document.createElement('span');icon.textContent=item.type==='directory'?'📁':item.mime?.startsWith('image/')?'🖼️':item.mime?.startsWith('video/')?'🎬':'📄';const name=document.createElement('span');name.className='name';name.textContent=item.name;const modified=document.createElement('span');modified.className='meta modified-folder';modified.textContent=formatDate(item.modified);const size=document.createElement('span');size.className='meta';size.textContent=item.size==null?'':formatSize(item.size);row.append(icon,name,modified,size);entries.append(row)}}catch(error){entries.innerHTML='';const message=document.createElement('div');message.className='state';message.textContent=`Fehler: ${error.message}`;entries.append(message)}}
+    document.querySelectorAll('.view').forEach(button=>button.addEventListener('click',()=>{document.querySelectorAll('.view').forEach(item=>item.classList.toggle('active',item===button));const folder=button.dataset.view==='folder';$('#recordings-view').style.display=folder?'none':'block';$('#folder-view').style.display=folder?'block':'none';if(folder&&!state.folderLoaded){state.folderLoaded=true;loadDirectory()}}));
+    $('#filters').addEventListener('submit',event=>{event.preventDefault();state.q=$('#search').value.trim();state.camera=$('#camera').value;state.from=$('#from').value;state.to=$('#to').value;state.page=1;loadRecordings()});
+    $('#reset').addEventListener('click',()=>{$('#filters').reset();state.q=state.camera=state.from=state.to='';state.page=1;loadRecordings()});
+    $('#refresh').addEventListener('click',async()=>{const button=$('#refresh');button.disabled=true;try{await request('api/refresh',{}, {method:'POST',headers:{'X-Reolink-CSRF':state.csrf}});$('#scan-status').textContent='Aktualisierung angefordert …';setTimeout(loadRecordings,500)}catch(error){alert(`Aktualisieren fehlgeschlagen: ${error.message}`)}finally{button.disabled=false}});
+    document.querySelectorAll('th button[data-sort]').forEach(button=>button.addEventListener('click',()=>{const sort=button.dataset.sort;if(state.sort===sort)state.direction=state.direction==='asc'?'desc':'asc';else{state.sort=sort;state.direction=sort==='modified'?'desc':'asc'}state.page=1;setSortLabels();loadRecordings()}));
+    $('#page-size').addEventListener('change',event=>{state.pageSize=Number(event.target.value);state.page=1;loadRecordings()});$('#previous').addEventListener('click',()=>{if(state.page>1){state.page--;loadRecordings()}});$('#next').addEventListener('click',()=>{if(state.page<state.pages){state.page++;loadRecordings()}});
+    $('#viewer-close').addEventListener('click',closeViewer);$('#viewer').addEventListener('click',event=>{if(event.target===$('#viewer'))closeViewer()});$('#cancel-delete').addEventListener('click',()=>{$('#confirm').close();state.pendingDelete=null});$('#confirm-delete').addEventListener('click',deleteRecording);
+    (async()=>{try{const [meta,users]=await Promise.all([request('api/meta'),request('api/users')]);state.cameras=meta.cameras;state.users=users.users;state.csrf=meta.csrf_token;state.user=state.users[0]?.username||'';for(const camera of state.cameras){const option=document.createElement('option');option.value=camera;option.textContent=cameraLabel(camera);$('#camera').append(option)}renderTabs();setSortLabels();loadRecordings()}catch(error){$('#recordings').innerHTML='<tr><td colspan="6" class="state"></td></tr>';$('#recordings td').textContent=`Fehler: ${error.message}`}})();
   </script>
 </body>
 </html>

@@ -10,9 +10,11 @@ import logging
 import mimetypes
 import os
 import re
+import secrets
 import shutil
 import signal
 import socket
+import sqlite3
 import ssl
 import stat
 import subprocess
@@ -20,6 +22,7 @@ import sys
 import tempfile
 import threading
 import time
+from contextlib import closing
 from email.utils import formatdate
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from dataclasses import dataclass
@@ -27,7 +30,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import parse_qs, quote, urlsplit
 
-VERSION = "0.10.0"
+VERSION = "0.10.1"
 RESERVED_USERS = {"root", "anonymous", "ftp", "nobody", "daemon", "bin", "sync"}
 USERNAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$")
 PATH_SEGMENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -36,6 +39,11 @@ HOSTNAME_RE = re.compile(
     r"^(?=.{1,253}\.?$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)*"
     r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.?$"
 )
+VIDEO_EXTENSIONS = {
+    ".264", ".avi", ".h264", ".h265", ".hevc", ".m4v", ".mkv", ".mov",
+    ".mp4", ".mpeg", ".mpg", ".ts", ".webm",
+}
+INDEX_SETTLE_SECONDS = 30
 LOG = logging.getLogger("reolink-ftps")
 
 
@@ -510,6 +518,23 @@ def browser_user_roots(config: RuntimeConfig) -> dict[str, Path]:
     return roots
 
 
+def browser_camera_roots(config: RuntimeConfig) -> dict[str, Path]:
+    """Return one representative camera account for each physical user root."""
+    selected: dict[Path, User] = {}
+    recording_root = config.recording_root.resolve(strict=True)
+    for user in config.users:
+        root = (recording_root / user.directory).resolve(strict=True)
+        path_beneath(root, recording_root, "Browser camera directory")
+        current = selected.get(root)
+        if current is None or (current.read_only and not user.read_only):
+            selected[root] = user
+    return {user.username: root for root, user in selected.items()}
+
+
+def is_video_file(path: Path) -> bool:
+    return path.suffix.casefold() in VIDEO_EXTENSIONS
+
+
 def resolve_browser_path(root: Path, relative: str, *, expected: str | None = None) -> Path:
     if not isinstance(relative, str) or "\x00" in relative or "\\" in relative or relative.startswith("/"):
         raise BrowserRequestError(400, "Invalid relative path")
@@ -590,12 +615,266 @@ def parse_byte_range(value: str | None, size: int) -> tuple[int, int, bool]:
     return start, end, True
 
 
+class RecordingIndex:
+    """Persistent, rebuildable metadata index for recording table queries."""
+
+    SORT_COLUMNS = {
+        "modified": "modified", "name": "name COLLATE NOCASE", "size": "size",
+        "camera": "camera COLLATE NOCASE", "path": "relative_path COLLATE NOCASE",
+    }
+
+    def __init__(
+        self, path: Path, sources: dict[str, Path], *, scan_interval: int = 60,
+        settle_seconds: int = INDEX_SETTLE_SECONDS,
+    ):
+        self.path = path
+        self.sources = sources
+        self.scan_interval = scan_interval
+        self.settle_seconds = settle_seconds
+        self.stop_event = threading.Event()
+        self.wake_event = threading.Event()
+        self.lock = threading.Lock()
+        self.scanning = False
+        self.last_scan: int | None = None
+        self.last_error: str | None = None
+        self.thread: threading.Thread | None = None
+        self._initialize()
+
+    def _connect(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(self.path, timeout=10)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA busy_timeout = 10000")
+        return connection
+
+    def _initialize(self) -> None:
+        self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        try:
+            self._initialize_database()
+        except sqlite3.DatabaseError:
+            LOG.warning("Discarding corrupt recording metadata index; it will be rebuilt")
+            for suffix in ("", "-wal", "-shm"):
+                try:
+                    Path(f"{self.path}{suffix}").unlink()
+                except FileNotFoundError:
+                    pass
+            self._initialize_database()
+        self.path.chmod(0o600)
+
+    def _initialize_database(self) -> None:
+        with closing(self._connect()) as connection, connection:
+            connection.execute("PRAGMA journal_mode = WAL")
+            version = connection.execute("PRAGMA user_version").fetchone()[0]
+            if version not in (0, 1):
+                connection.execute("DROP TABLE IF EXISTS recordings")
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS recordings (
+                    camera TEXT NOT NULL,
+                    relative_path TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    directory TEXT NOT NULL,
+                    size INTEGER NOT NULL,
+                    modified_ns INTEGER NOT NULL,
+                    modified INTEGER NOT NULL,
+                    mime TEXT NOT NULL,
+                    seen_scan INTEGER NOT NULL,
+                    PRIMARY KEY (camera, relative_path)
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS recordings_modified ON recordings(modified DESC)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS recordings_camera_modified ON recordings(camera, modified DESC)"
+            )
+            connection.execute("PRAGMA user_version = 1")
+
+    def start(self) -> None:
+        self.thread = threading.Thread(target=self._run, name="recording-index", daemon=True)
+        self.thread.start()
+
+    def stop(self) -> None:
+        self.stop_event.set()
+        self.wake_event.set()
+        if self.thread:
+            self.thread.join(timeout=10)
+
+    def refresh(self) -> None:
+        self.wake_event.set()
+
+    def _run(self) -> None:
+        while not self.stop_event.is_set():
+            with self.lock:
+                self.scanning = True
+                self.last_error = None
+            try:
+                self._scan_all()
+                with self.lock:
+                    self.last_scan = int(time.time())
+            except Exception as err:
+                LOG.exception("Recording index scan failed")
+                with self.lock:
+                    self.last_error = str(err)
+            finally:
+                with self.lock:
+                    self.scanning = False
+            self.wake_event.wait(self.scan_interval)
+            self.wake_event.clear()
+
+    def _scan_all(self) -> None:
+        cutoff = time.time() - self.settle_seconds
+        def raise_walk_error(error: OSError) -> None:
+            raise error
+
+        for camera, root in self.sources.items():
+            if not root.is_dir() or root.is_symlink():
+                raise OSError(f"Camera recording root is unavailable: {root}")
+            scan_token = time.time_ns()
+            batch: list[tuple[Any, ...]] = []
+            for current, directories, files in os.walk(
+                root, topdown=True, onerror=raise_walk_error, followlinks=False,
+            ):
+                current_path = Path(current)
+                directories[:] = [
+                    name for name in directories
+                    if not (current_path / name).is_symlink()
+                ]
+                for name in files:
+                    path = current_path / name
+                    if not is_video_file(path):
+                        continue
+                    try:
+                        info = path.lstat()
+                    except FileNotFoundError:
+                        continue
+                    if not stat.S_ISREG(info.st_mode) or info.st_mtime > cutoff:
+                        continue
+                    relative = path.relative_to(root).as_posix()
+                    batch.append((
+                        camera, relative, name, str(PurePosixPath(relative).parent), info.st_size,
+                        info.st_mtime_ns, int(info.st_mtime),
+                        mimetypes.guess_type(name)[0] or "video/mp4", scan_token,
+                    ))
+                    if len(batch) >= 500:
+                        self._upsert(batch)
+                        batch.clear()
+            if batch:
+                self._upsert(batch)
+            with closing(self._connect()) as connection, connection:
+                connection.execute(
+                    "DELETE FROM recordings WHERE camera = ? AND seen_scan != ?", (camera, scan_token),
+                )
+        cameras = tuple(self.sources)
+        with closing(self._connect()) as connection, connection:
+            if cameras:
+                placeholders = ",".join("?" for _ in cameras)
+                connection.execute(
+                    f"DELETE FROM recordings WHERE camera NOT IN ({placeholders})", cameras,
+                )
+            else:
+                connection.execute("DELETE FROM recordings")
+
+    def _upsert(self, rows: list[tuple[Any, ...]]) -> None:
+        with closing(self._connect()) as connection, connection:
+            connection.executemany(
+                """
+                INSERT INTO recordings (
+                    camera, relative_path, name, directory, size, modified_ns, modified, mime, seen_scan
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(camera, relative_path) DO UPDATE SET
+                    name = excluded.name,
+                    directory = excluded.directory,
+                    size = excluded.size,
+                    modified_ns = excluded.modified_ns,
+                    modified = excluded.modified,
+                    mime = excluded.mime,
+                    seen_scan = excluded.seen_scan
+                """,
+                rows,
+            )
+
+    @staticmethod
+    def _search_pattern(value: str) -> str:
+        escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        return f"%{escaped}%"
+
+    def query(
+        self, *, camera: str = "", search: str = "", from_time: int | None = None,
+        to_time: int | None = None, sort: str = "modified", direction: str = "desc",
+        page: int = 1, page_size: int = 100,
+    ) -> dict[str, Any]:
+        if camera and camera not in self.sources:
+            raise BrowserRequestError(400, "Unknown camera filter")
+        if sort not in self.SORT_COLUMNS or direction not in {"asc", "desc"}:
+            raise BrowserRequestError(400, "Invalid sort order")
+        if not 1 <= page_size <= 200 or page < 1:
+            raise BrowserRequestError(400, "Invalid page")
+        conditions: list[str] = []
+        parameters: list[Any] = []
+        if camera:
+            conditions.append("camera = ?")
+            parameters.append(camera)
+        if search:
+            conditions.append("(name LIKE ? ESCAPE '\\' OR relative_path LIKE ? ESCAPE '\\')")
+            pattern = self._search_pattern(search)
+            parameters.extend((pattern, pattern))
+        if from_time is not None:
+            conditions.append("modified >= ?")
+            parameters.append(from_time)
+        if to_time is not None:
+            conditions.append("modified <= ?")
+            parameters.append(to_time)
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        order = self.SORT_COLUMNS[sort]
+        offset = (page - 1) * page_size
+        with closing(self._connect()) as connection, connection:
+            total = connection.execute(
+                f"SELECT COUNT(*) FROM recordings {where}", parameters,
+            ).fetchone()[0]
+            rows = connection.execute(
+                f"""
+                SELECT camera, relative_path, name, directory, size, modified, mime
+                FROM recordings {where}
+                ORDER BY {order} {direction.upper()}, relative_path COLLATE NOCASE ASC
+                LIMIT ? OFFSET ?
+                """,
+                (*parameters, page_size, offset),
+            ).fetchall()
+        pages = max(1, (total + page_size - 1) // page_size)
+        return {
+            "items": [dict(row) for row in rows], "total": total, "page": page,
+            "page_size": page_size, "pages": pages, "status": self.status(),
+        }
+
+    def indexed(self, camera: str, relative: str) -> bool:
+        with closing(self._connect()) as connection, connection:
+            return connection.execute(
+                "SELECT 1 FROM recordings WHERE camera = ? AND relative_path = ?",
+                (camera, relative),
+            ).fetchone() is not None
+
+    def remove(self, camera: str, relative: str) -> None:
+        with closing(self._connect()) as connection, connection:
+            connection.execute(
+                "DELETE FROM recordings WHERE camera = ? AND relative_path = ?", (camera, relative),
+            )
+
+    def status(self) -> dict[str, Any]:
+        with self.lock:
+            scanning, last_scan, error = self.scanning, self.last_scan, self.last_error
+        with closing(self._connect()) as connection, connection:
+            count = connection.execute("SELECT COUNT(*) FROM recordings").fetchone()[0]
+        return {"scanning": scanning, "last_scan": last_scan, "error": error, "files": count}
+
+
 class RecordingBrowser:
-    """Read-only, Home Assistant Ingress-only recording browser."""
+    """Home Assistant Ingress-only recording browser and recording manager."""
 
     def __init__(
         self, config: RuntimeConfig, *, host: str = "0.0.0.0", port: int = 8099,
         allowed_clients: set[str] | None = None, index_path: Path = Path("/usr/local/share/reolink-ftps/index.html"),
+        data_dir: Path = Path("/data"), scan_interval: int = 60,
     ):
         self.config = config
         self.host = host
@@ -603,6 +882,11 @@ class RecordingBrowser:
         self.allowed_clients = {"172.30.32.2"} if allowed_clients is None else allowed_clients
         self.index_html = index_path.read_text(encoding="utf-8")
         self.user_roots = browser_user_roots(config)
+        self.camera_roots = browser_camera_roots(config)
+        self.index = RecordingIndex(
+            data_dir / "recordings-index.sqlite3", self.camera_roots, scan_interval=scan_interval,
+        )
+        self.csrf_token = secrets.token_urlsafe(32)
         self.server: ThreadingHTTPServer | None = None
         self.thread: threading.Thread | None = None
 
@@ -623,13 +907,38 @@ class RecordingBrowser:
             def do_GET(self) -> None:
                 self._dispatch(head_only=False)
 
-            def _dispatch(self, *, head_only: bool) -> None:
+            def do_POST(self) -> None:
+                self._dispatch(head_only=False, post=True)
+
+            def _dispatch(self, *, head_only: bool, post: bool = False) -> None:
                 try:
                     if self.client_address[0] not in browser.allowed_clients:
                         raise BrowserRequestError(403, "Ingress access only")
                     request = urlsplit(self.path)
                     if request.path in {"", "/"}:
                         self._serve_index(head_only)
+                    elif request.path == "/api/meta":
+                        self._serve_json({
+                            "cameras": list(browser.camera_roots),
+                            "csrf_token": browser.csrf_token,
+                            "status": browser.index.status(),
+                        }, head_only)
+                    elif request.path == "/api/recordings":
+                        query = parse_qs(request.query, keep_blank_values=True)
+                        search = self._one(query, "q", default="").strip()
+                        if len(search) > 200:
+                            raise BrowserRequestError(400, "Search is too long")
+                        result = browser.index.query(
+                            camera=self._one(query, "camera", default=""),
+                            search=search,
+                            from_time=self._integer(query, "from", default=None),
+                            to_time=self._integer(query, "to", default=None),
+                            sort=self._one(query, "sort", default="modified"),
+                            direction=self._one(query, "direction", default="desc"),
+                            page=self._integer(query, "page", default=1) or 1,
+                            page_size=self._integer(query, "page_size", default=100) or 100,
+                        )
+                        self._serve_json(result, head_only)
                     elif request.path == "/api/users":
                         self._serve_json({"users": [
                             {"username": user.username, "directory": user.directory}
@@ -648,6 +957,17 @@ class RecordingBrowser:
                         _user, root = self._user(query)
                         relative = self._one(query, "path")
                         self._serve_file(resolve_browser_path(root, relative, expected="file"), head_only)
+                    elif request.path == "/api/refresh" and post:
+                        self._require_csrf()
+                        browser.index.refresh()
+                        self._serve_json({"refreshing": True}, head_only)
+                    elif request.path == "/api/delete" and post:
+                        self._require_csrf()
+                        query = parse_qs(request.query, keep_blank_values=True)
+                        camera = self._one(query, "camera")
+                        relative = self._one(query, "path")
+                        browser.delete_recording(camera, relative)
+                        self._serve_json({"deleted": True}, head_only)
                     else:
                         raise BrowserRequestError(404, "Not found")
                 except BrowserRequestError as err:
@@ -670,6 +990,23 @@ class RecordingBrowser:
                 if len(values) != 1:
                     raise BrowserRequestError(400, f"Invalid {key}")
                 return values[0]
+
+            @classmethod
+            def _integer(
+                cls, query: dict[str, list[str]], key: str, *, default: int | None,
+            ) -> int | None:
+                value = cls._one(query, key, default="" if default is None else str(default))
+                if value == "":
+                    return None
+                try:
+                    return int(value)
+                except ValueError:
+                    raise BrowserRequestError(400, f"Invalid {key}") from None
+
+            def _require_csrf(self) -> None:
+                supplied = self.headers.get("X-Reolink-CSRF", "")
+                if not secrets.compare_digest(supplied, browser.csrf_token):
+                    raise BrowserRequestError(403, "Invalid request token")
 
             def _user(self, query: dict[str, list[str]]) -> tuple[str, Path]:
                 username = self._one(query, "user")
@@ -775,6 +1112,7 @@ class RecordingBrowser:
             raise ConfigError(f"Recording browser cannot listen on Ingress port {self.port}: {err}") from err
         self.port = self.server.server_address[1]
         self.server.daemon_threads = True
+        self.index.start()
         self.thread = threading.Thread(target=self.server.serve_forever, name="recording-browser", daemon=True)
         self.thread.start()
         LOG.info("Recording browser ready on Home Assistant Ingress port %d", self.port)
@@ -785,6 +1123,30 @@ class RecordingBrowser:
             self.server.server_close()
         if self.thread:
             self.thread.join(timeout=5)
+        self.index.stop()
+
+    def delete_recording(self, camera: str, relative: str) -> None:
+        root = self.camera_roots.get(camera)
+        if root is None or not self.index.indexed(camera, relative):
+            raise BrowserRequestError(404, "Recording not found")
+        try:
+            path = resolve_browser_path(root, relative, expected="file")
+            info = path.lstat()
+            if not stat.S_ISREG(info.st_mode) or not is_video_file(path):
+                raise BrowserRequestError(400, "Only indexed video recordings can be deleted")
+            if info.st_mtime > time.time() - INDEX_SETTLE_SECONDS:
+                raise BrowserRequestError(409, "Recording is still being written")
+            path.unlink()
+        except BrowserRequestError as err:
+            if err.status == 404:
+                self.index.remove(camera, relative)
+            raise
+        except FileNotFoundError:
+            self.index.remove(camera, relative)
+            raise BrowserRequestError(404, "Recording not found") from None
+        except OSError as err:
+            raise BrowserRequestError(500, f"Recording cannot be deleted: {err.strerror or err}") from err
+        self.index.remove(camera, relative)
 
 
 class Supervisor:
@@ -911,7 +1273,7 @@ def main() -> int:
         os.chown(secure_chroot, 0, 0)
         secure_chroot.chmod(0o555)
         vsftpd_config = build_vsftpd_config(config, runtime_dir)
-        browser = RecordingBrowser(config)
+        browser = RecordingBrowser(config, data_dir=data_dir)
         browser.start()
         supervisor = Supervisor(config, vsftpd_config, openssl_config, browser)
         signal.signal(signal.SIGTERM, supervisor.terminate)

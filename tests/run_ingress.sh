@@ -17,9 +17,13 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p "${test_dir}/media/ReolinkSSD/reolink/front/day" \
+    "${test_dir}/media/ReolinkSSD/reolink/garden/day" \
     "${test_dir}/media/ReolinkSSD/reolink/viewer" \
     "${test_dir}/data" "${test_dir}/ssl" "${test_dir}/share"
 printf '0123456789' >"${test_dir}/media/ReolinkSSD/reolink/front/day/clip.mp4"
+printf 'garden-video' >"${test_dir}/media/ReolinkSSD/reolink/garden/day/garden.mp4"
+touch -t 202601010000 "${test_dir}/media/ReolinkSSD/reolink/front/day/clip.mp4"
+touch -t 202602010000 "${test_dir}/media/ReolinkSSD/reolink/garden/day/garden.mp4"
 cp tests/fixtures/options.json "${test_dir}/data/options.json"
 
 docker network create --subnet 172.30.32.0/24 "${network}" >/dev/null
