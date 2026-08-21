@@ -1,7 +1,7 @@
 name: Reolink FTPS Server
-version: "0.9.1"
+version: "0.10.0"
 slug: reolink_ftps
-description: Secure explicit FTPS server for Reolink cameras, powered by vsftpd.
+description: Secure explicit FTPS server and Ingress recording browser for Reolink cameras.
 url: https://github.com/robby-z/ftp-addon/tree/main/reolink_ftps
 startup: services
 init: false
@@ -9,6 +9,10 @@ arch:
   - amd64
   - aarch64
 image: ghcr.io/robby-z/reolink-ftps
+ingress: true
+ingress_stream: true
+panel_icon: mdi:cctv
+panel_title: Reolink-Aufnahmen
 backup: cold
 map:
   - type: media

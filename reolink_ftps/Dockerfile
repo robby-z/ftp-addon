@@ -2,7 +2,7 @@ ARG BUILD_FROM=ghcr.io/home-assistant/base-debian:trixie
 FROM ${BUILD_FROM}
 
 ARG BUILD_ARCH
-ARG BUILD_VERSION=0.9.1
+ARG BUILD_VERSION=0.10.0
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -24,6 +24,6 @@ LABEL \
     io.hass.name="Reolink FTPS Server" \
     io.hass.version="${BUILD_VERSION}" \
     org.opencontainers.image.title="Home Assistant App: Reolink FTPS Server" \
-    org.opencontainers.image.description="Secure explicit FTPS server for Reolink cameras, powered by vsftpd." \
+    org.opencontainers.image.description="Secure explicit FTPS server and Ingress recording browser for Reolink cameras." \
     org.opencontainers.image.source="https://github.com/robby-z/ftp-addon" \
     org.opencontainers.image.licenses="MIT"

@@ -31,10 +31,15 @@ jobs:
           shellcheck reolink_ftps/rootfs/etc/services.d/reolink-ftps/run
           reolink_ftps/rootfs/etc/services.d/reolink-ftps/finish
           tests/run_integration.sh tests/run_diagnostic.sh tests/trace-vsftpd
-          tests/missing_anchor.sh tests/low_space.sh
+          tests/missing_anchor.sh tests/low_space.sh tests/run_ingress.sh
       - name: Python compile and unit/security tests
         run: |
-          python -m py_compile reolink_ftps/rootfs/usr/local/bin/reolink-ftps tests/test_runtime.py tests/integration_ftps.py tests/diagnostic_login.py
+          python -m py_compile \
+            reolink_ftps/rootfs/usr/local/bin/reolink-ftps \
+            tests/test_runtime.py \
+            tests/integration_ftps.py \
+            tests/integration_ingress.py \
+            tests/diagnostic_login.py
           python -m unittest discover -s tests -p 'test_*.py' -v
       - name: Home Assistant App metadata lint
         uses: frenck/action-addon-linter@v2.21.0
@@ -54,6 +59,8 @@ jobs:
         run: docker build --platform linux/amd64 --tag reolink-ftps:test reolink_ftps
       - name: Explicit FTPS, passive, isolation, read-only, and restart tests
         run: tests/run_integration.sh reolink-ftps:test
+      - name: Home Assistant Ingress browser and range streaming
+        run: tests/run_ingress.sh reolink-ftps:test
       - name: Capture vsftpd syscall diagnostics after live-test failure
         if: failure()
         continue-on-error: true

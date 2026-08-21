@@ -13,6 +13,12 @@ This Home Assistant App provides a small, authenticated vsftpd service for Reoli
 
 The App intentionally refuses to start with an empty user list, blank PASV address, missing anchor, unsafe path, missing required marker, or invalid TLS material.
 
+## Recording browser
+
+Select **Open Web UI** on the App page to browse recordings inside Home Assistant. Each configured FTP user has a separate tab rooted at that user's directory. The interface is read-only: it can list, preview, stream, seek, and download recordings but cannot rename or delete them.
+
+Home Assistant Ingress authenticates the browser and proxies its internal port; port 8099 is not published to the LAN. Symbolic links and paths outside the configured user roots are refused. Direct MP4 playback depends on the browser codec support. H.264 is broadly compatible, while H.265/HEVC may require downloading the original recording and opening it in a compatible player.
+
 ## Configuration example
 
 ```yaml

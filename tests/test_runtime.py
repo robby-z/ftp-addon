@@ -10,6 +10,9 @@ import sys
 import tempfile
 import time
 import unittest
+import urllib.error
+import urllib.parse
+import urllib.request
 from unittest import mock
 from pathlib import Path
 
@@ -201,6 +204,90 @@ class RuntimeTests(unittest.TestCase):
         self.assertIn("pasv_address=127.0.0.1", text)
         self.assertEqual((user_dir / "camera_front").read_text().splitlines()[-1], "write_enable=YES")
         self.assertEqual((user_dir / "viewer").read_text().splitlines()[-1], "write_enable=NO")
+
+    def test_browser_paths_ranges_and_symlink_safety(self):
+        config = self.prepare()
+        user_root = config.recording_root / "front"
+        nested = user_root / "2026" / "08"
+        nested.mkdir(parents=True)
+        recording = nested / "clip.mp4"
+        recording.write_bytes(b"0123456789")
+        outside = self.share / "outside.mp4"
+        outside.write_bytes(b"outside")
+        (user_root / "escape.mp4").symlink_to(outside)
+
+        entries = runtime.list_browser_directory(user_root, "")
+        self.assertEqual([entry["name"] for entry in entries], ["2026"])
+        self.assertEqual(runtime.resolve_browser_path(user_root, "2026/08/clip.mp4"), recording)
+        for unsafe in ("../outside.mp4", "/etc/passwd", "2026/../outside", "escape.mp4"):
+            with self.subTest(path=unsafe), self.assertRaises(runtime.BrowserRequestError):
+                runtime.resolve_browser_path(user_root, unsafe)
+        self.assertEqual(runtime.parse_byte_range("bytes=2-5", 10), (2, 5, True))
+        self.assertEqual(runtime.parse_byte_range("bytes=-3", 10), (7, 9, True))
+        self.assertEqual(runtime.parse_byte_range(None, 10), (0, 9, False))
+        for invalid in ("items=0-1", "bytes=10-11", "bytes=4-2", "bytes=0-1,4-5"):
+            with self.subTest(value=invalid), self.assertRaises(runtime.BrowserRequestError):
+                runtime.parse_byte_range(invalid, 10)
+
+    def test_ingress_browser_users_listing_streaming_and_access_control(self):
+        config = self.prepare()
+        recording = config.recording_root / "front/clip.mp4"
+        recording.write_bytes(b"0123456789")
+        index = self.root / "index.html"
+        index.write_text("<script>const base=__INGRESS_PATH__;</script>")
+        browser = runtime.RecordingBrowser(
+            config, host="127.0.0.1", port=0, allowed_clients={"127.0.0.1"}, index_path=index,
+        )
+        browser.start()
+        base = f"http://127.0.0.1:{browser.port}"
+        try:
+            with urllib.request.urlopen(f"{base}/api/users") as response:
+                users = json.load(response)["users"]
+            self.assertEqual([user["username"] for user in users], ["camera_front", "viewer"])
+            self.assertNotIn("password", users[0])
+
+            query = urllib.parse.urlencode({"user": "camera_front", "path": ""})
+            with urllib.request.urlopen(f"{base}/api/list?{query}") as response:
+                listing = json.load(response)
+            self.assertEqual(listing["entries"][0]["name"], "clip.mp4")
+
+            query = urllib.parse.urlencode({"user": "camera_front", "path": "clip.mp4"})
+            request = urllib.request.Request(f"{base}/media?{query}", headers={"Range": "bytes=2-5"})
+            with urllib.request.urlopen(request) as response:
+                self.assertEqual(response.status, 206)
+                self.assertEqual(response.headers["Content-Range"], "bytes 2-5/10")
+                self.assertEqual(response.read(), b"2345")
+
+            request = urllib.request.Request(f"{base}/media?{query}", headers={"Range": "bytes=99-"})
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                urllib.request.urlopen(request)
+            self.assertEqual(caught.exception.code, 416)
+            self.assertEqual(caught.exception.headers["Content-Range"], "bytes */10")
+            caught.exception.close()
+
+            request = urllib.request.Request(f"{base}/", headers={"X-Ingress-Path": "/api/hassio_ingress/test"})
+            with urllib.request.urlopen(request) as response:
+                self.assertIn(b'"/api/hassio_ingress/test"', response.read())
+
+            traversal = urllib.parse.urlencode({"user": "camera_front", "path": "../outside"})
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                urllib.request.urlopen(f"{base}/api/list?{traversal}")
+            self.assertEqual(caught.exception.code, 400)
+            caught.exception.close()
+        finally:
+            browser.stop()
+
+        denied = runtime.RecordingBrowser(
+            config, host="127.0.0.1", port=0, allowed_clients={"192.0.2.1"}, index_path=index,
+        )
+        denied.start()
+        try:
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                urllib.request.urlopen(f"http://127.0.0.1:{denied.port}/api/users")
+            self.assertEqual(caught.exception.code, 403)
+            caught.exception.close()
+        finally:
+            denied.stop()
 
     def test_plain_ftp_needs_explicit_opt_in(self):
         value = options()

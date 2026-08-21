@@ -21,6 +21,7 @@ profile reolink_ftps flags=(attach_disconnected,mediate_deleted) {
   /usr/bin/** ix,
   /usr/sbin/** ix,
   /usr/local/bin/reolink-ftps rix,
+  /usr/local/share/reolink-ftps/index.html r,
   /usr/lib/bashio/** rix,
   /package/** rix,
   /command/** rix,

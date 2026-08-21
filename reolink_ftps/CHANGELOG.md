@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.0
+
+- Add a Home Assistant Ingress recording browser with per-user tabs and safe directory navigation.
+- Stream recordings with HTTP byte-range support for seeking and offer original-file downloads.
+- Keep the browser read-only, Ingress-authenticated, and confined to each configured user directory.
+
 ## 0.9.1
 
 - Treat an omitted per-user `read_only` checkbox as `false`, matching Home Assistant's form behavior.

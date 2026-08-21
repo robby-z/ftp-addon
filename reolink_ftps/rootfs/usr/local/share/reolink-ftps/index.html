@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>Reolink-Aufnahmen</title>
+  <style>
+    :root { color-scheme: light dark; --primary:#03a9f4; --card:#fff; --bg:#f5f5f5; --text:#212121; --muted:#6b7280; --line:#dedede; --hover:#eef7fc; }
+    @media (prefers-color-scheme:dark) { :root { --card:#1c1c1c; --bg:#111; --text:#eee; --muted:#a3a3a3; --line:#383838; --hover:#173342; } }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    header { position:sticky; top:0; z-index:5; padding:18px 20px 0; background:var(--card); border-bottom:1px solid var(--line); }
+    h1 { margin:0 0 14px; font-size:22px; font-weight:500; }
+    #tabs { display:flex; gap:4px; overflow:auto; scrollbar-width:thin; }
+    .tab { border:0; border-bottom:3px solid transparent; padding:10px 14px; color:var(--muted); background:transparent; font:inherit; white-space:nowrap; cursor:pointer; }
+    .tab.active { color:var(--primary); border-color:var(--primary); font-weight:600; }
+    main { max-width:1200px; margin:18px auto; padding:0 18px 40px; }
+    .card { overflow:hidden; background:var(--card); border:1px solid var(--line); border-radius:12px; box-shadow:0 2px 8px #00000012; }
+    #crumbs { display:flex; align-items:center; gap:6px; min-height:52px; padding:8px 14px; border-bottom:1px solid var(--line); overflow:auto; }
+    .crumb { border:0; padding:6px 7px; border-radius:6px; color:var(--primary); background:transparent; font:inherit; cursor:pointer; white-space:nowrap; }
+    .crumb:hover, .entry:hover { background:var(--hover); }
+    #entries { min-height:120px; }
+    .entry { display:grid; grid-template-columns:34px minmax(0,1fr) auto auto; gap:10px; align-items:center; width:100%; padding:11px 14px; border:0; border-bottom:1px solid var(--line); color:inherit; background:transparent; text-align:left; font:inherit; cursor:pointer; }
+    .entry:last-child { border-bottom:0; }
+    .icon { font-size:20px; text-align:center; }
+    .name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .meta { color:var(--muted); font-size:12px; white-space:nowrap; }
+    .state { padding:34px 18px; color:var(--muted); text-align:center; }
+    dialog { width:min(1000px,calc(100% - 24px)); max-height:calc(100vh - 24px); padding:0; border:0; border-radius:12px; color:var(--text); background:var(--card); box-shadow:0 16px 60px #0008; }
+    dialog::backdrop { background:#000a; }
+    .viewer-head { display:flex; align-items:center; gap:12px; padding:12px 16px; border-bottom:1px solid var(--line); }
+    .viewer-title { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:600; }
+    .action { border:1px solid var(--line); border-radius:8px; padding:7px 10px; color:inherit; background:transparent; text-decoration:none; cursor:pointer; }
+    .viewer-body { display:grid; place-items:center; min-height:240px; padding:12px; background:#000; }
+    video, audio, .preview-image { display:block; max-width:100%; max-height:calc(100vh - 130px); }
+    video { width:100%; }
+    .hint { margin:0; padding:12px 16px; color:var(--muted); background:var(--card); }
+    @media (max-width:640px) { header { padding-left:12px; padding-right:12px; } main { padding:0 8px 24px; margin-top:8px; } .entry { grid-template-columns:30px minmax(0,1fr) auto; } .modified { display:none; } }
+  </style>
+</head>
+<body>
+  <header><h1>Reolink-Aufnahmen</h1><nav id="tabs" aria-label="FTP-Benutzer"></nav></header>
+  <main><section class="card"><nav id="crumbs" aria-label="Verzeichnispfad"></nav><div id="entries"><div class="state">Lade Aufnahmen …</div></div></section></main>
+  <dialog id="viewer">
+    <div class="viewer-head"><span class="viewer-title" id="viewer-title"></span><a class="action" id="download" download>Herunterladen</a><button class="action" id="close" type="button">Schließen</button></div>
+    <div class="viewer-body" id="viewer-body"></div>
+    <p class="hint" id="viewer-hint">Falls das Video nicht startet, verwendet die Kamera möglicherweise H.265/HEVC, das nicht jeder Browser wiedergeben kann. Die Originaldatei kann weiterhin heruntergeladen werden.</p>
+  </dialog>
+  <script>
+    const INGRESS_PATH = __INGRESS_PATH__;
+    const basePath = INGRESS_PATH ? INGRESS_PATH.replace(/\/?$/, '/') : new URL('.', location.href).pathname;
+    const state = { users: [], user: '', path: '' };
+    const tabs = document.querySelector('#tabs');
+    const crumbs = document.querySelector('#crumbs');
+    const entries = document.querySelector('#entries');
+    const viewer = document.querySelector('#viewer');
+    const viewerBody = document.querySelector('#viewer-body');
+    const viewerHint = document.querySelector('#viewer-hint');
+
+    function endpoint(path, params = {}) {
+      const url = new URL(basePath + path.replace(/^\//, ''), location.origin);
+      for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
+      return url.toString();
+    }
+    function formatSize(bytes) {
+      if (bytes == null) return '';
+      const units = ['B','KB','MB','GB','TB']; let value = bytes; let unit = 0;
+      while (value >= 1000 && unit < units.length - 1) { value /= 1000; unit++; }
+      return `${value.toFixed(unit ? 1 : 0)} ${units[unit]}`;
+    }
+    function formatDate(seconds) { return new Date(seconds * 1000).toLocaleString(); }
+    function button(className, text, click) {
+      const element = document.createElement('button'); element.type = 'button'; element.className = className; element.textContent = text; element.addEventListener('click', click); return element;
+    }
+    async function request(path, params) {
+      const response = await fetch(endpoint(path, params), { cache:'no-store' });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+      return body;
+    }
+    function renderTabs() {
+      tabs.replaceChildren();
+      for (const user of state.users) {
+        const tab = button(`tab${user.username === state.user ? ' active' : ''}`, user.username, () => { state.user = user.username; state.path = ''; renderTabs(); loadDirectory(); });
+        tab.title = user.directory; tabs.append(tab);
+      }
+    }
+    function renderCrumbs() {
+      crumbs.replaceChildren();
+      crumbs.append(button('crumb', state.user || 'Aufnahmen', () => { state.path = ''; loadDirectory(); }));
+      let current = '';
+      for (const part of state.path.split('/').filter(Boolean)) {
+        crumbs.append(document.createTextNode('›'));
+        current = current ? `${current}/${part}` : part;
+        const target = current;
+        crumbs.append(button('crumb', part, () => { state.path = target; loadDirectory(); }));
+      }
+    }
+    function renderEntries(items) {
+      entries.replaceChildren();
+      if (!items.length) { const empty = document.createElement('div'); empty.className = 'state'; empty.textContent = 'Dieses Verzeichnis ist leer.'; entries.append(empty); return; }
+      for (const item of items) {
+        const row = button('entry', '', () => item.type === 'directory' ? openDirectory(item.path) : openMedia(item));
+        const icon = document.createElement('span'); icon.className = 'icon'; icon.textContent = item.type === 'directory' ? '📁' : item.mime?.startsWith('video/') ? '🎬' : item.mime?.startsWith('image/') ? '🖼️' : '📄';
+        const name = document.createElement('span'); name.className = 'name'; name.textContent = item.name;
+        const modified = document.createElement('span'); modified.className = 'meta modified'; modified.textContent = formatDate(item.modified);
+        const size = document.createElement('span'); size.className = 'meta'; size.textContent = formatSize(item.size);
+        row.append(icon, name, modified, size); entries.append(row);
+      }
+    }
+    function openDirectory(path) { state.path = path; loadDirectory(); }
+    async function loadDirectory() {
+      renderCrumbs(); entries.innerHTML = '<div class="state">Lade Aufnahmen …</div>';
+      try { const data = await request('api/list', { user:state.user, path:state.path }); renderEntries(data.entries); }
+      catch (error) { entries.innerHTML = ''; const message = document.createElement('div'); message.className = 'state'; message.textContent = `Fehler: ${error.message}`; entries.append(message); }
+    }
+    function openMedia(item) {
+      const url = endpoint('media', { user:state.user, path:item.path });
+      document.querySelector('#viewer-title').textContent = item.name;
+      const download = document.querySelector('#download'); download.href = url; download.download = item.name;
+      viewerBody.replaceChildren(); viewerHint.hidden = true;
+      let media;
+      if (item.mime?.startsWith('video/')) { media = document.createElement('video'); media.controls = true; media.autoplay = true; media.playsInline = true; viewerHint.hidden = false; media.addEventListener('error', () => { viewerHint.hidden = false; }); }
+      else if (item.mime?.startsWith('image/')) { media = document.createElement('img'); media.className = 'preview-image'; media.alt = item.name; }
+      else if (item.mime?.startsWith('audio/')) { media = document.createElement('audio'); media.controls = true; media.autoplay = true; }
+      else { media = document.createElement('p'); media.className = 'state'; media.textContent = 'Für diesen Dateityp ist keine Vorschau verfügbar.'; }
+      if ('src' in media) media.src = url;
+      viewerBody.append(media); viewer.showModal();
+    }
+    function closeViewer() { for (const media of viewerBody.querySelectorAll('video,audio')) { media.pause(); media.removeAttribute('src'); media.load(); } viewer.close(); }
+    document.querySelector('#close').addEventListener('click', closeViewer);
+    viewer.addEventListener('click', event => { if (event.target === viewer) closeViewer(); });
+    (async () => {
+      try { const data = await request('api/users'); state.users = data.users; if (!state.users.length) throw new Error('Keine Benutzer konfiguriert'); state.user = state.users[0].username; renderTabs(); loadDirectory(); }
+      catch (error) { entries.innerHTML = ''; const message = document.createElement('div'); message.className = 'state'; message.textContent = `Fehler: ${error.message}`; entries.append(message); }
+    })();
+  </script>
+</body>
+</html>

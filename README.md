@@ -12,12 +12,13 @@ A production-oriented Home Assistant App that provides secure explicit FTPS for 
 - Explicit FTPS (`AUTH TLS`) on TCP 21; no SFTP or implicit port 990
 - Fixed passive range TCP 30000–30019 and camera-reachable PASV address
 - Multiple camera-specific users, chroot isolation, and read-only viewer accounts
+- Authenticated Home Assistant web UI with per-user tabs, safe file browsing, previews, and downloads
 - TLS required by default; persistent self-signed or relative `/ssl` certificate pair
 - Pre-existing storage-anchor requirement so a missing SSD cannot silently fall back to the system disk
 - Optional marker file, filesystem write tests, and correct-filesystem free-space reporting
 - Service cutoff below a configurable free-space threshold
 - Optional symlink-safe retention limited to regular files inside the validated recording root
-- AppArmor, Home Assistant Protection Mode, no host network, no devices, no APIs, no privilege escalation
+- AppArmor, Home Assistant Protection Mode, no host network, no devices, no Supervisor API access, no privilege escalation
 - English and German Home Assistant configuration translations
 - `amd64` and `aarch64` GHCR release images
 
@@ -126,9 +127,11 @@ Recordings stay outside App `/data` and may be hundreds of gigabytes. They gener
 
 See [reolink_ftps/DOCS.md](reolink_ftps/DOCS.md) for missing-mount recovery, marker initialization, FTPS handshake and certificate issues, passive/VLAN firewall failures, 0-byte files, permissions, low-space behavior, retention safety, and development commands.
 
+The App page's **Open Web UI** button opens the read-only recording browser through Home Assistant Ingress. Video seeking uses HTTP byte ranges. H.264 MP4 is broadly supported; H.265/HEVC playback depends on the browser and device, so the original-file download remains available as a fallback.
+
 ## Publishing
 
-Create a GitHub release tag matching `reolink_ftps/config.yaml`, for example `v0.9.1`. The release workflow tests and publishes `amd64`, `aarch64`, and the generic `ghcr.io/robby-z/reolink-ftps:0.9.1` manifest. The repository owner must make the GHCR package public after its first publish: **GitHub profile/organization → Packages → reolink-ftps → Package settings → Change visibility → Public**.
+Create a GitHub release tag matching `reolink_ftps/config.yaml`, for example `v0.10.0`. The release workflow tests and publishes `amd64`, `aarch64`, and the generic `ghcr.io/robby-z/reolink-ftps:0.10.0` manifest. The repository owner must make the GHCR package public after its first publish: **GitHub profile/organization → Packages → reolink-ftps → Package settings → Change visibility → Public**.
 
 ## License
 
