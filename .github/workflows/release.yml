@@ -31,7 +31,7 @@ jobs:
       - name: Verify release tag matches App version
         if: github.event_name == 'push'
         env:
-          APP_VERSION: ${{ steps.info.outputs.version }}
+          APP_VERSION: ${{ fromJSON(steps.info.outputs.version) }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: test "${RELEASE_TAG}" = "v${APP_VERSION}"
       - name: Prepare architecture matrix
