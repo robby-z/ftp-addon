@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.1
+
+- Treat an omitted per-user `read_only` checkbox as `false`, matching Home Assistant's form behavior.
+
 ## 0.9.0
 
 - Initial production release.

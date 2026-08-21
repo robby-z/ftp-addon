@@ -88,6 +88,17 @@ class RuntimeTests(unittest.TestCase):
         with self.assertRaises(runtime.ConfigError):
             self.prepare(value)
 
+    def test_missing_read_only_defaults_to_write_access(self):
+        value = options()
+        del value["users"][0]["read_only"]
+        config = self.prepare(value)
+        self.assertFalse(config.users[0].read_only)
+
+        value = options()
+        value["users"][0]["read_only"] = "false"
+        with self.assertRaisesRegex(runtime.ConfigError, "read_only"):
+            self.prepare(value)
+
     def test_absolute_traversal_and_path_tricks_rejected(self):
         for directory in ("/media/ReolinkSSD/reolink", "../reolink", "ReolinkSSD/../share", "ReolinkSSD\\reolink", "ReolinkSSD/reo link", "ReolinkSSD/./reolink"):
             value = options()

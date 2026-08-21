@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-VERSION = "0.9.0"
+VERSION = "0.9.1"
 RESERVED_USERS = {"root", "anonymous", "ftp", "nobody", "daemon", "bin", "sync"}
 USERNAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$")
 PATH_SEGMENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -157,10 +157,11 @@ def validate_users(raw_users: Any) -> tuple[User, ...]:
         if "\x00" in password or "\n" in password or "\r" in password:
             raise ConfigError(f"Password for {username} contains unsupported control characters")
         directory = str(validated_relative(item.get("directory"), f"Directory for {username}"))
-        if not isinstance(item.get("read_only"), bool):
+        read_only = item.get("read_only", False)
+        if not isinstance(read_only, bool):
             raise ConfigError(f"read_only for {username} must be true or false")
         names.add(username)
-        result.append(User(username, password, directory, item["read_only"]))
+        result.append(User(username, password, directory, read_only))
     return tuple(result)
 
 
