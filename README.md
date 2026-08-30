@@ -127,11 +127,11 @@ Recordings stay outside App `/data` and may be hundreds of gigabytes. They gener
 
 See [reolink_ftps/DOCS.md](reolink_ftps/DOCS.md) for missing-mount recovery, marker initialization, FTPS handshake and certificate issues, passive/VLAN firewall failures, 0-byte files, permissions, low-space behavior, retention safety, and development commands.
 
-The App page's **Open Web UI** button opens the recording manager through Home Assistant Ingress. Its default table combines all camera recordings, newest first, with camera/text/date filters, sorting, pagination, playback, download, and confirmed deletion. The original per-user folder view remains available. Video seeking uses HTTP byte ranges. H.264 MP4 is broadly supported; H.265/HEVC playback depends on the browser and device, so downloading the original remains available as a fallback.
+The App page's **Open Web UI** button opens the responsive recording manager through Home Assistant Ingress. Its default table combines all camera recordings, newest first, with disk statistics, persistent watched state, camera/text/date/age/watched filters, sorting, pagination, playback, download, and confirmed single or bulk deletion. The original per-user folder view remains available. Video seeking uses HTTP byte ranges. H.264 MP4 is broadly supported; H.265/HEVC playback depends on the browser and device, so downloading the original remains available as a fallback.
 
 ## Publishing
 
-Create a GitHub release tag matching `reolink_ftps/config.yaml`, for example `v0.10.1`. The release workflow tests and publishes `amd64`, `aarch64`, and the generic `ghcr.io/robby-z/reolink-ftps:0.10.1` manifest. The repository owner must make the GHCR package public after its first publish: **GitHub profile/organization → Packages → reolink-ftps → Package settings → Change visibility → Public**.
+Create a GitHub release tag matching `reolink_ftps/config.yaml`, for example `v1.0.0`. The release workflow tests and publishes `amd64`, `aarch64`, and the generic `ghcr.io/robby-z/reolink-ftps:1.0.0` manifest. The repository owner must make the GHCR package public after its first publish: **GitHub profile/organization → Packages → reolink-ftps → Package settings → Change visibility → Public**.
 
 ## License
 

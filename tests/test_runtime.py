@@ -326,11 +326,52 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(index.query(sort="size", direction="asc")["items"][0]["name"], "older.mp4")
         self.assertEqual(index.query(from_time=int(now - 150))["total"], 2)
         self.assertEqual(index.query(to_time=int(now - 150))["total"], 1)
+        self.assertEqual(index.query()["filtered_size"], sum(len(content) for _, content, _ in clips))
         self.assertFalse(index.indexed("camera_front", "active.mp4"))
         self.assertFalse(index.indexed("camera_front", "linked.mp4"))
 
+        index.set_watched("camera_front", "2026/08/newer.MKV", True)
+        self.assertEqual(index.query(watched="watched")["total"], 1)
+        self.assertEqual(index.query(watched="unwatched")["total"], 2)
+        index._scan_all()
+        self.assertTrue(index.query(search="newer")["items"][0]["watched"])
+
         reopened = runtime.RecordingIndex(database, sources)
         self.assertEqual(reopened.query()["total"], 3)
+        self.assertTrue(reopened.query(search="newer")["items"][0]["watched"])
+
+        changed = camera_root / "2026/08/newer.MKV"
+        changed.write_bytes(b"replacement with a different identity")
+        os.utime(changed, (now - 45, now - 45))
+        reopened._scan_all()
+        self.assertFalse(reopened.query(search="newer")["items"][0]["watched"])
+
+    def test_recording_index_migrates_v1_watched_schema(self):
+        config = self.prepare()
+        database = self.data / "recordings-index.sqlite3"
+        with runtime.closing(runtime.sqlite3.connect(database)) as connection, connection:
+            connection.execute(
+                """
+                CREATE TABLE recordings (
+                    camera TEXT NOT NULL, relative_path TEXT NOT NULL, name TEXT NOT NULL,
+                    directory TEXT NOT NULL, size INTEGER NOT NULL, modified_ns INTEGER NOT NULL,
+                    modified INTEGER NOT NULL, mime TEXT NOT NULL, seen_scan INTEGER NOT NULL,
+                    PRIMARY KEY (camera, relative_path)
+                )
+                """
+            )
+            connection.execute(
+                "INSERT INTO recordings VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                ("camera_front", "legacy.mp4", "legacy.mp4", ".", 12, 123, 100, "video/mp4", 1),
+            )
+            connection.execute("PRAGMA user_version = 1")
+        index = runtime.RecordingIndex(database, runtime.browser_camera_roots(config))
+        item = index.query()["items"][0]
+        self.assertFalse(item["watched"])
+        index.set_watched("camera_front", "legacy.mp4", True)
+        self.assertTrue(index.query()["items"][0]["watched"])
+        with runtime.closing(runtime.sqlite3.connect(database)) as connection, connection:
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 2)
 
     def test_recording_index_rebuilds_corrupt_database(self):
         config = self.prepare()
@@ -372,8 +413,24 @@ class RuntimeTests(unittest.TestCase):
             with urllib.request.urlopen(f"{base}/api/meta") as response:
                 meta = json.load(response)
             self.assertEqual(meta["cameras"], ["camera_front"])
+            self.assertGreater(meta["storage"]["total"], 0)
+            self.assertIn("percent", meta["storage"])
             with urllib.request.urlopen(f"{base}/api/recordings") as response:
                 self.assertEqual(json.load(response)["total"], 3)
+
+            watched_body = json.dumps({
+                "camera": "camera_front", "path": "day/clip.mp4", "watched": True,
+            }).encode()
+            watched_request = urllib.request.Request(
+                f"{base}/api/watched", data=watched_body, method="POST",
+                headers={
+                    "Content-Type": "application/json", "X-Reolink-CSRF": meta["csrf_token"],
+                },
+            )
+            with urllib.request.urlopen(watched_request) as response:
+                self.assertTrue(json.load(response)["watched"])
+            with urllib.request.urlopen(f"{base}/api/recordings?watched=watched") as response:
+                self.assertEqual(json.load(response)["total"], 1)
 
             active_query = urllib.parse.urlencode({"camera": "camera_front", "path": "day/active.mp4"})
             active_delete = urllib.request.Request(
@@ -422,6 +479,85 @@ class RuntimeTests(unittest.TestCase):
             with self.assertRaises(urllib.error.HTTPError) as caught:
                 urllib.request.urlopen(unsafe)
             self.assertEqual(caught.exception.code, 404)
+            caught.exception.close()
+        finally:
+            browser.stop()
+
+    def test_bulk_delete_selected_and_filtered_with_stale_selection_protection(self):
+        config = self.prepare()
+        root = config.recording_root / "front"
+        now = time.time() - 60
+        recordings = {}
+        for name, content in (("a.mp4", b"a"), ("b.mp4", b"bb"), ("c.mp4", b"ccc"), ("d.mp4", b"dddd")):
+            path = root / name
+            path.write_bytes(content)
+            os.utime(path, (now, now))
+            recordings[name] = path
+        index_html = self.root / "index.html"
+        index_html.write_text("test")
+        browser = runtime.RecordingBrowser(
+            config, host="127.0.0.1", port=0, allowed_clients={"127.0.0.1"},
+            index_path=index_html, data_dir=self.data, scan_interval=3600,
+        )
+        browser.index._scan_all()
+        browser.index.stop_event.set()
+        browser.start()
+        base = f"http://127.0.0.1:{browser.port}"
+        try:
+            with urllib.request.urlopen(f"{base}/api/meta") as response:
+                token = json.load(response)["csrf_token"]
+
+            def post_bulk(payload, *, csrf=token):
+                return urllib.request.urlopen(urllib.request.Request(
+                    f"{base}/api/delete-bulk", data=json.dumps(payload).encode(), method="POST",
+                    headers={"Content-Type": "application/json", "X-Reolink-CSRF": csrf},
+                ))
+
+            selected = {
+                "mode": "selected", "expected_count": 3,
+                "recordings": [
+                    {"camera": "camera_front", "path": "a.mp4"},
+                    {"camera": "camera_front", "path": "b.mp4"},
+                ],
+            }
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                post_bulk(selected)
+            self.assertEqual(caught.exception.code, 409)
+            caught.exception.close()
+            self.assertTrue(recordings["a.mp4"].exists())
+
+            selected["expected_count"] = 2
+            with post_bulk(selected) as response:
+                result = json.load(response)
+            self.assertEqual((result["deleted"], result["failed"], result["reclaimed"]), (2, 0, 3))
+            self.assertFalse(recordings["a.mp4"].exists())
+            self.assertFalse(recordings["b.mp4"].exists())
+
+            filtered = {
+                "mode": "filtered", "expected_count": 1, "expected_size": 999,
+                "filters": {"camera": "camera_front", "q": "", "from": None, "to": None,
+                            "watched": "all"},
+                "excluded": [{"camera": "camera_front", "path": "d.mp4"}],
+            }
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                post_bulk(filtered)
+            self.assertEqual(caught.exception.code, 409)
+            caught.exception.close()
+            self.assertTrue(recordings["c.mp4"].exists())
+
+            filtered["expected_size"] = 3
+            with post_bulk(filtered) as response:
+                result = json.load(response)
+            self.assertEqual((result["requested"], result["deleted"], result["reclaimed"]), (1, 1, 3))
+            self.assertFalse(recordings["c.mp4"].exists())
+            self.assertTrue(recordings["d.mp4"].exists())
+            with urllib.request.urlopen(f"{base}/api/recordings") as response:
+                self.assertEqual(json.load(response)["total"], 1)
+
+            no_csrf = {"mode": "selected", "expected_count": 1, "recordings": []}
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                post_bulk(no_csrf, csrf="")
+            self.assertEqual(caught.exception.code, 403)
             caught.exception.close()
         finally:
             browser.stop()

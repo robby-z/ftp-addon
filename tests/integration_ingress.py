@@ -16,9 +16,14 @@ def open_url(url: str, *, headers: dict[str, str] | None = None):
     return urllib.request.urlopen(urllib.request.Request(url, headers=headers or {}), timeout=10)
 
 
-def post_url(url: str, *, headers: dict[str, str] | None = None):
+def post_url(url: str, payload: dict | None = None, *, headers: dict[str, str] | None = None):
+    request_headers = dict(headers or {})
+    data = None
+    if payload is not None:
+        data = json.dumps(payload).encode()
+        request_headers["Content-Type"] = "application/json"
     return urllib.request.urlopen(
-        urllib.request.Request(url, headers=headers or {}, method="POST"), timeout=10,
+        urllib.request.Request(url, data=data, headers=request_headers, method="POST"), timeout=10,
     )
 
 
@@ -57,6 +62,8 @@ def main() -> int:
         meta = json.load(response)
     assert meta["cameras"] == ["camera_front", "camera_garden"]
     assert meta["csrf_token"]
+    assert meta["storage"]["total"] > 0
+    assert 0 <= meta["storage"]["percent"] <= 100
 
     recordings = None
     for _ in range(30):
@@ -73,6 +80,17 @@ def main() -> int:
         filtered = json.load(response)
     assert filtered["total"] == 1
     assert filtered["items"][0]["relative_path"] == "day/clip.mp4"
+    assert filtered["filtered_size"] == 10
+
+    with post_url(
+        f"{base}/api/watched",
+        {"camera": "camera_front", "path": "day/clip.mp4", "watched": True},
+        headers={"X-Reolink-CSRF": meta["csrf_token"]},
+    ) as response:
+        assert json.load(response)["watched"] is True
+    with open_url(f"{base}/api/recordings?watched=watched") as response:
+        watched = json.load(response)
+    assert watched["total"] == 1 and watched["items"][0]["camera"] == "camera_front"
 
     list_query = urllib.parse.urlencode({"user": "camera_front", "path": "day"})
     with open_url(f"{base}/api/list?{list_query}") as response:
@@ -98,22 +116,29 @@ def main() -> int:
     else:
         raise AssertionError("Traversal request unexpectedly succeeded")
 
-    delete_query = urllib.parse.urlencode({"camera": "camera_garden", "path": "day/garden.mp4"})
+    bulk_payload = {
+        "mode": "filtered", "expected_count": 1, "expected_size": 12,
+        "filters": {
+            "camera": "camera_garden", "q": "", "from": None, "to": None, "watched": "all",
+        },
+        "excluded": [],
+    }
     try:
-        post_url(f"{base}/api/delete?{delete_query}")
+        post_url(f"{base}/api/delete-bulk", bulk_payload)
     except urllib.error.HTTPError as err:
         try:
             assert err.code == 403
         finally:
             err.close()
     else:
-        raise AssertionError("Delete without CSRF token unexpectedly succeeded")
+        raise AssertionError("Bulk delete without CSRF token unexpectedly succeeded")
 
     with post_url(
-        f"{base}/api/delete?{delete_query}",
+        f"{base}/api/delete-bulk", bulk_payload,
         headers={"X-Reolink-CSRF": meta["csrf_token"]},
     ) as response:
-        assert json.load(response)["deleted"] is True
+        deleted = json.load(response)
+    assert deleted["deleted"] == 1 and deleted["reclaimed"] == 12
     with open_url(f"{base}/api/recordings") as response:
         assert json.load(response)["total"] == 1
 

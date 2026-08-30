@@ -2,7 +2,7 @@ ARG BUILD_FROM=ghcr.io/home-assistant/base-debian:trixie
 FROM ${BUILD_FROM}
 
 ARG BUILD_ARCH
-ARG BUILD_VERSION=0.10.1
+ARG BUILD_VERSION=1.0.0
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \

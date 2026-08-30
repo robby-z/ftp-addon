@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.0
+
+- Show live capacity, used space, free space, and disk utilization for the validated recording filesystem.
+- Persist watched state in the SQLite metadata index, reset it when a recording is replaced, and add watched/unwatched filtering.
+- Add quick age filters and safe bulk deletion for selected rows or all current filter results, with exclusions, count/size confirmation, and partial-failure reporting.
+- Add deletion directly from the video viewer while retaining the existing confirmation and storage-safety checks.
+- Redesign the recording table, filters, selection controls, and dialogs for phone-sized Home Assistant clients.
+
 ## 0.10.1
 
 - Add a recursive recording table with newest-first ordering, camera and date filters, search, sortable columns, and pagination.
