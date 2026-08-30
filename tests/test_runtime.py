@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
+import http.client
 import json
 import os
 import shutil
@@ -41,6 +42,26 @@ def options() -> dict:
         "idle_session_timeout": 600, "data_connection_timeout": 300, "delay_failed_login": 2,
         "retention_days": 0, "log_level": "info",
     }
+
+
+def chunked_json_request(
+    base: str, path: str, payload: dict, *, token: str, content_length: bool = False,
+):
+    parsed = urllib.parse.urlsplit(base)
+    connection = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=10)
+    body = json.dumps(payload).encode()
+    connection.putrequest("POST", path)
+    connection.putheader("Content-Type", "application/json")
+    connection.putheader("Transfer-Encoding", "chunked")
+    connection.putheader("X-Reolink-CSRF", token)
+    if content_length:
+        connection.putheader("Content-Length", str(len(body)))
+    connection.endheaders()
+    connection.send(f"{len(body):x}\r\n".encode() + body + b"\r\n0\r\n\r\n")
+    response = connection.getresponse()
+    result = response.status, json.loads(response.read())
+    connection.close()
+    return result
 
 
 class RuntimeTests(unittest.TestCase):
@@ -431,6 +452,20 @@ class RuntimeTests(unittest.TestCase):
                 self.assertTrue(json.load(response)["watched"])
             with urllib.request.urlopen(f"{base}/api/recordings?watched=watched") as response:
                 self.assertEqual(json.load(response)["total"], 1)
+
+            status, value = chunked_json_request(
+                base, "/api/watched",
+                {"camera": "camera_front", "path": "day/clip.mp4", "watched": False},
+                token=meta["csrf_token"],
+            )
+            self.assertEqual((status, value["watched"]), (200, False))
+            status, value = chunked_json_request(
+                base, "/api/watched",
+                {"camera": "camera_front", "path": "day/clip.mp4", "watched": True},
+                token=meta["csrf_token"], content_length=True,
+            )
+            self.assertEqual(status, 400)
+            self.assertEqual(value["error"], "Ambiguous request body")
 
             active_query = urllib.parse.urlencode({"camera": "camera_front", "path": "day/active.mp4"})
             active_delete = urllib.request.Request(

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.1
+
+- Accept bounded HTTP/1.1 chunked JSON request bodies forwarded by Home Assistant Ingress.
+- Restore watched-state updates and bulk deletion when Ingress omits `Content-Length`.
+- Reject ambiguous, malformed, incomplete, oversized, or unsupported request-body framing.
+
 ## 1.0.0
 
 - Show live capacity, used space, free space, and disk utilization for the validated recording filesystem.

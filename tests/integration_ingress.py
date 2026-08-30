@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import sys
 import time
@@ -16,15 +17,26 @@ def open_url(url: str, *, headers: dict[str, str] | None = None):
     return urllib.request.urlopen(urllib.request.Request(url, headers=headers or {}), timeout=10)
 
 
-def post_url(url: str, payload: dict | None = None, *, headers: dict[str, str] | None = None):
-    request_headers = dict(headers or {})
-    data = None
-    if payload is not None:
-        data = json.dumps(payload).encode()
-        request_headers["Content-Type"] = "application/json"
-    return urllib.request.urlopen(
-        urllib.request.Request(url, data=data, headers=request_headers, method="POST"), timeout=10,
-    )
+def post_chunked(base_url: str, path: str, payload: dict, *, token: str = ""):
+    parsed = urllib.parse.urlsplit(base_url)
+    connection = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=10)
+    body = json.dumps(payload).encode()
+    connection.putrequest("POST", path)
+    connection.putheader("Content-Type", "application/json")
+    connection.putheader("Transfer-Encoding", "chunked")
+    if token:
+        connection.putheader("X-Reolink-CSRF", token)
+    connection.endheaders()
+    split = max(1, len(body) // 2)
+    for chunk in (body[:split], body[split:]):
+        if chunk:
+            connection.send(f"{len(chunk):x}\r\n".encode() + chunk + b"\r\n")
+    connection.send(b"0\r\n\r\n")
+    response = connection.getresponse()
+    status = response.status
+    value = json.loads(response.read())
+    connection.close()
+    return status, value
 
 
 def main() -> int:
@@ -82,12 +94,12 @@ def main() -> int:
     assert filtered["items"][0]["relative_path"] == "day/clip.mp4"
     assert filtered["filtered_size"] == 10
 
-    with post_url(
-        f"{base}/api/watched",
+    status, watched_update = post_chunked(
+        base, "/api/watched",
         {"camera": "camera_front", "path": "day/clip.mp4", "watched": True},
-        headers={"X-Reolink-CSRF": meta["csrf_token"]},
-    ) as response:
-        assert json.load(response)["watched"] is True
+        token=meta["csrf_token"],
+    )
+    assert status == 200 and watched_update["watched"] is True
     with open_url(f"{base}/api/recordings?watched=watched") as response:
         watched = json.load(response)
     assert watched["total"] == 1 and watched["items"][0]["camera"] == "camera_front"
@@ -123,21 +135,13 @@ def main() -> int:
         },
         "excluded": [],
     }
-    try:
-        post_url(f"{base}/api/delete-bulk", bulk_payload)
-    except urllib.error.HTTPError as err:
-        try:
-            assert err.code == 403
-        finally:
-            err.close()
-    else:
-        raise AssertionError("Bulk delete without CSRF token unexpectedly succeeded")
+    status, rejected = post_chunked(base, "/api/delete-bulk", bulk_payload)
+    assert status == 403 and rejected["error"] == "Invalid request token"
 
-    with post_url(
-        f"{base}/api/delete-bulk", bulk_payload,
-        headers={"X-Reolink-CSRF": meta["csrf_token"]},
-    ) as response:
-        deleted = json.load(response)
+    status, deleted = post_chunked(
+        base, "/api/delete-bulk", bulk_payload, token=meta["csrf_token"],
+    )
+    assert status == 200
     assert deleted["deleted"] == 1 and deleted["reclaimed"] == 12
     with open_url(f"{base}/api/recordings") as response:
         assert json.load(response)["total"] == 1

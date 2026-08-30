@@ -131,7 +131,7 @@ The App page's **Open Web UI** button opens the responsive recording manager thr
 
 ## Publishing
 
-Create a GitHub release tag matching `reolink_ftps/config.yaml`, for example `v1.0.0`. The release workflow tests and publishes `amd64`, `aarch64`, and the generic `ghcr.io/robby-z/reolink-ftps:1.0.0` manifest. The repository owner must make the GHCR package public after its first publish: **GitHub profile/organization → Packages → reolink-ftps → Package settings → Change visibility → Public**.
+Create a GitHub release tag matching `reolink_ftps/config.yaml`, for example `v1.0.1`. The release workflow tests and publishes `amd64`, `aarch64`, and the generic `ghcr.io/robby-z/reolink-ftps:1.0.1` manifest. The repository owner must make the GHCR package public after its first publish: **GitHub profile/organization → Packages → reolink-ftps → Package settings → Change visibility → Public**.
 
 ## License
 
